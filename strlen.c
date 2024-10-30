@@ -61,12 +61,30 @@ size_t _naive_strlen(const char *str) {
 
 #define ARR_SIZE 3000000
 int main(int argc, char **argv) {
-    char str[ARR_SIZE];
-    for(size_t i = 0; i < ARR_SIZE; ++ i) {
+    char *str = NULL;
+    size_t len = 0;
+    if(argc < 2) {
+        str = (char *)malloc(ARR_SIZE * sizeof(char));
+        len = ARR_SIZE;
+    }
+    else {
+        len = atol(argv[1]);
+        if(!len) {
+            str = (char *)malloc(ARR_SIZE * sizeof(char));
+            len = ARR_SIZE;
+        }
+        else {
+            str = (char *)malloc(len * sizeof(char));
+        }
+    }
+    if(str == NULL) {
+        return 1;
+    }
+    for(size_t i = 0; i < len; ++ i) {
         str[i] = rand() % 60 + 60;
     }
     srand(time(0));
-    size_t pos = ((size_t)rand() + (size_t)rand()) % ARR_SIZE;
+    size_t pos = ((size_t)rand() + (size_t)rand()) % len;
     str[pos] = '\0';
     clock_t s, e;
 
@@ -89,5 +107,7 @@ int main(int argc, char **argv) {
     _quick_strlen(str);
     e = clock();
     printf("%lu\t%lu\n", e - s, _quick_strlen(str));
-
+    
+    free(str);
+    return 0;
 }
