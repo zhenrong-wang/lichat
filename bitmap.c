@@ -114,7 +114,7 @@ void free_bitmap(bitmap_t **ptr_bitmap) {
 }
 
 int main(int argc, char **argv) {
-    bitmap_t *p = create_bitmap(100);
+    bitmap_t *p = create_bitmap(1000);
     printf("Created a bitmap with size: %lu.\n", get_bitmap_size(p));
     sn_update(0, p);
     printf("Updated the element[0].\n");
@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
     printf("Elem[0]:\t%d\nElem[1]:\t%d\nElem[2]:\t%d\n", sn_check(0, p), \
             sn_check(1, p), sn_check(2, p));
     printf("All_check:\t%d\n", all_check(p));
-    for(size_t i = 0; i < 100; ++ i) {
+    for(size_t i = 0; i < 1000; ++ i) {
         sn_update(i, p);
     }
     printf("All_check:\t%d\n", all_check(p));
