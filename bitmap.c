@@ -94,19 +94,18 @@ int all_check(const bitmap_t *ptr_bitmap) {
     uint64_t *level1_ptr = (uint64_t *)(ptr_bitmap + sizeof(size_t));
     for(size_t i = 0; i < level1_rounds; ++ i) {
         if(level1_ptr[i] != UINT64_MAX)
-            return 1;
+            return 1; /* Vacancy found. */
     }
     u8 *level2_ptr = (u8 *)(level1_ptr + level1_rounds);
     for(size_t i = 0; i < level2_rounds; ++ i) {
         if(level2_ptr[i] != UINT8_MAX)
-            return 1;
+            return 1; /* Vacancy found. */
     }
     u8 last_byte = *(level2_ptr + level2_rounds);
     for(u8 i = 0; i < res_bits; ++ i) {
         if((last_byte & (0x80 >> i)) == 0)
-            return 1;
+            return 1; /* Vacancy found. */
     }
-
     return 0; /* The bitmap is full. */
 }
 
