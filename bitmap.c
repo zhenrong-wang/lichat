@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #define INVALID_BITMAP_SIZE 0
 typedef unsigned char bitmap_t;
 typedef unsigned char u8;
@@ -81,12 +82,31 @@ int sn_update(const size_t sn, bitmap_t *ptr_bitmap) {
  * Walk across the map to see whether it is full or not. 
  * This usually happens when checking data integrity (avoid data loss).
  */
-size_t all_check(const bitmap_t *ptr_bitmap) {
+int all_check(const bitmap_t *ptr_bitmap) {
     size_t bitmap_size = get_bitmap_size(ptr_bitmap);
-    for(size_t i = 0; i < bitmap_size; ++ i) {
-        if(!sn_check(i, ptr_bitmap))
-            return i; /* There is still vacancy in the bitmap. */
+    if(bitmap_size == INVALID_BITMAP_SIZE) 
+        return -3;
+
+    size_t level1_rounds = bitmap_size >> 6;
+    size_t level2_rounds = (bitmap_size & 0x3F) >> 3;
+    u8 res_bits = (bitmap_size & 0x3F) & 0x07;
+
+    uint64_t *level1_ptr = (uint64_t *)(ptr_bitmap + sizeof(size_t));
+    for(size_t i = 0; i < level1_rounds; ++ i) {
+        if(level1_ptr[i] != UINT64_MAX)
+            return 1;
     }
+    u8 *level2_ptr = (u8 *)(level1_ptr + level1_rounds);
+    for(size_t i = 0; i < level2_rounds; ++ i) {
+        if(level2_ptr[i] != UINT8_MAX)
+            return 1;
+    }
+    u8 last_byte = *(level2_ptr + level2_rounds);
+    for(u8 i = 0; i < res_bits; ++ i) {
+        if((last_byte & (0x80 >> i)) == 0)
+            return 1;
+    }
+
     return 0; /* The bitmap is full. */
 }
 
@@ -105,5 +125,10 @@ int main(int argc, char **argv) {
     printf("Updated the element[1].\n");
     printf("Elem[0]:\t%d\nElem[1]:\t%d\nElem[2]:\t%d\n", sn_check(0, p), \
             sn_check(1, p), sn_check(2, p));
+    printf("All_check:\t%d\n", all_check(p));
+    for(size_t i = 0; i < 100; ++ i) {
+        sn_update(i, p);
+    }
+    printf("All_check:\t%d\n", all_check(p));
     free_bitmap(&p);
 }
