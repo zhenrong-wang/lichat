@@ -9,14 +9,12 @@
 #include <vector>
 
 #define DEFAULT_PORT 8081
-#define DEFAULT_BACKLOG 3
-#define DEFAULT_BUFFSIZE 1024
+#define INIT_BUFFSIZE 1024
 
 class echo_server_udp {
     struct sockaddr_in address; // socket addr
     uint16_t port;              // port number
     int server_fd;              // generated server file descriptor
-    int backlog;                // backlog
     size_t buff_size;           // io buffer size
     int err_code;               // error code
     
@@ -29,8 +27,7 @@ public:
         address.sin_addr.s_addr = INADDR_ANY;
         address.sin_family = AF_INET;
         address.sin_port = htons(port);
-        backlog = DEFAULT_BACKLOG;
-        buff_size = DEFAULT_BUFFSIZE;
+        buff_size = INIT_BUFFSIZE;
     }
 
     // Close server and possible FD
