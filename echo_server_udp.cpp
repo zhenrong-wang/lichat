@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <thread>
 #include <vector>
 
 #define DEFAULT_PORT 8081

@@ -1,4 +1,4 @@
-// This is the *simplest* echo server in C++ just for learning
+// This is the *simplest* TCP echo server in C++ just for learning
 // It uses POSIX threads to make non-blocking possible, but that's not
 // a good way. In production, please use event loops or other approaches, they
 // are much better than multithreading here.
