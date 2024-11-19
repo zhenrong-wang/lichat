@@ -10,9 +10,9 @@
 #include <thread>
 #include <vector>
 
-#define DEFAULT_PORT 8080
-#define DEFAULT_BACKLOG 3
-#define DEFAULT_BUFFSIZE 1024
+constexpr uint16_t default_port = 8080;
+constexpr int default_backlog = 3;
+constexpr size_t default_buffsize = 1024;
 
 class echo_server_tcp {
     struct sockaddr_in address; // socket addr
@@ -26,13 +26,13 @@ public:
     // A simple constructor
     echo_server_tcp() {
         server_fd = -1;
-        port = DEFAULT_PORT;
+        port = default_port;
         err_code = 0;
         address.sin_addr.s_addr = INADDR_ANY;
         address.sin_family = AF_INET;
         address.sin_port = htons(port);
-        backlog = DEFAULT_BACKLOG;
-        buff_size = DEFAULT_BUFFSIZE;
+        backlog = default_backlog;
+        buff_size = default_buffsize;
     }
 
     // Close server and possible FD

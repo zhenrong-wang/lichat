@@ -7,8 +7,8 @@
 #include <arpa/inet.h>
 #include <vector>
 
-#define DEFAULT_PORT 8081
-#define INIT_BUFFSIZE 1024
+constexpr uint16_t default_port = 8081;
+constexpr size_t init_buffsize = 1024;
 
 class echo_server_udp {
     struct sockaddr_in address; // socket addr
@@ -21,12 +21,12 @@ public:
     // A simple constructor
     echo_server_udp() {
         server_fd = -1;
-        port = DEFAULT_PORT;
+        port = default_port;
         err_code = 0;
         address.sin_addr.s_addr = INADDR_ANY;
         address.sin_family = AF_INET;
         address.sin_port = htons(port);
-        buff_size = INIT_BUFFSIZE;
+        buff_size = init_buffsize;
     }
 
     // Close server and possible FD
