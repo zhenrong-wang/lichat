@@ -105,7 +105,6 @@ public:
             for(std::set<sockaddr_in, sockaddr_in_compare>::const_iterator \
                 it = clients.begin(); it != clients.end(); ++ it) {
                 const sockaddr_in& elem = *it;
-                std::cout << elem.sin_addr.s_addr << elem.sin_port << std::endl;
                 if(sendto(server_fd, buffer.data(), buffer.size(), MSG_CONFIRM, \
                 (struct sockaddr *)&elem, addr_len) < 0) {
                     std::cout << "<< Failed to echo: " << inet_ntoa(elem.sin_addr) \
