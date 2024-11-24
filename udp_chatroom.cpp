@@ -352,8 +352,10 @@ public:
                         buffer[bytes_recv - 1] = '\n';
                         msg_header = assemble_msg_header(client);
                         buffer.insert(buffer.begin(), msg_header.c_str(), msg_header.c_str() + msg_header.size());
-                        for(auto& item : clients) 
-                            simple_send(buffer.data(), buffer.size(), *(item.get_conn_addr()));
+                        for(auto& item : clients) {
+                            if(item.get_status() == 6)
+                                simple_send(buffer.data(), buffer.size(), *(item.get_conn_addr()));
+                        }
                     }
                 }
             }
