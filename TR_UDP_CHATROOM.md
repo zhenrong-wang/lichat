@@ -1,8 +1,10 @@
-# Technical Review: Build A Chatroom From Scratch
+# Technical Review: Build A Chatroom in 400 Lines of C++ Codes
 
 ## 1. Background
 
-A chatroom is a web service that allows multiple users to post messages to others. In this practice, we will build a chatroom based on the stateless protocol UDP. The language is C++ with support from libsodium (for hashing) and socket (for UDP communication).
+A chatroom is a web service that allows multiple users to join and post messages to others. In this practice, we will build a chatroom based on the stateless protocol UDP. The language is C++ with support from libsodium (for hashing) and socket (for UDP communication).
+
+Repo: `https://github.com/zhenrong-wang/random-codes/` -> Code: `udp_chatroom.cpp` 
 
 ## 2. Architecture
 
@@ -16,7 +18,7 @@ Service Users -'
 
 ### 3.1 Include Headers
 
-The code needs socket programming and libsodium for hashing passwords, so we need to include them
+The code needs socket programming and libsodium for hashing passwords, so we need to include them.
 
 ```
 #include <iostream>
@@ -33,7 +35,7 @@ The code needs socket programming and libsodium for hashing passwords, so we nee
 
 ### 3.2 Define Constants
 
-We use `constexpr` to define constants. These constants will be used in the following coding.
+We use `constexpr` to define constants that will be used in the following code.
 
 ```
 constexpr uint16_t default_port = 8081;
@@ -183,7 +185,7 @@ Then, we can define several methods to drive the server:
 
 ```
 
-### 3.6 The Simplest Main
+### 3.6 The `Main()`
 
 Because we only defined the default constructor that uses all default values, here the `main()` is also simple - the `args` are not used.
 
@@ -202,7 +204,7 @@ int main(int argc, char **argv) {
     return new_server.run_server();
 }
 ```
-One can make it more sophisticated but that would need other constructors.
+One can make it more sophisticated but that would probably need extra constructors.
 
 ## 4. Summary
 
