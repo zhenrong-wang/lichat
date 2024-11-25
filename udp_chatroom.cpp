@@ -11,8 +11,7 @@
 #include <vector>
 #include <sodium.h>     // For libsodium
 #include <cstring>      // For C string 
-#include <algorithm>
-#include <functional>   // For std::find_if
+#include <algorithm>    // For std::find_if
 #include <sstream>      // For stringstream
 
 constexpr uint16_t default_port = 8081;
