@@ -52,7 +52,7 @@ public:
     const struct sockaddr_in* get_conn_addr() const {
         return &conn_addr;
     }
-    void set_con_addr(struct sockaddr_in addr){
+    void set_conn_addr(struct sockaddr_in addr){
         conn_addr = addr;
     }
     std::string get_bind_uid() const {
@@ -276,7 +276,7 @@ public:
             auto conn_idx = get_conn_idx(client_addr);
             if(conn_idx == clients.size()) {
                 conn_ctx new_conn;
-                new_conn.set_con_addr(client_addr);
+                new_conn.set_conn_addr(client_addr);
                 simple_send(main_menu, sizeof(main_menu), client_addr);
                 new_conn.set_status(1);
                 clients.push_back(new_conn);
