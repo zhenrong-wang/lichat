@@ -1,4 +1,7 @@
 // This is the *simplest* UDP (Message based) echo server in C++ for learning
+// Originally written by Zhenrong WANG (zhenrongwang@live.com | X/Twitter: @wangzhr4)
+// Prerequisites: libsodium. You need to install it before compiling this code
+// Compile: g++ upd_chatroom.cpp -lsodium
 
 #include <iostream>
 #include <sys/socket.h>
@@ -6,12 +9,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <vector>
-#include <sodium.h>
-#include <set>
-#include <cstring>
+#include <sodium.h>     // For libsodium
+#include <cstring>      // For C string 
 #include <algorithm>
-#include <functional>
-#include <sstream>
+#include <functional>   // For std::find_if
+#include <sstream>      // For stringstream
 
 constexpr uint16_t default_port = 8081;
 constexpr size_t init_buffsize = 1024;
@@ -23,19 +25,24 @@ constexpr char user_uid_exist[] = "user already exist.\n";
 constexpr char user_uid_error[] = "user not exist.\n";
 constexpr char password_error[] = "password doesn't match.\n";
 constexpr char signup_ok[] = "signed up and signed in.\nq! to sign out.\n";
-constexpr char signin_ok[] = "signed in.\nq! to sign out.\n";
+constexpr char signin_ok[] = "signed in.\nsend ~:q! to sign out.\n";
 constexpr char signed_out[] = "!!! signed out.\n";
 constexpr char user_already_signin[] = "user already signed in at: ";
 
+// Each user entry include a unique id and a hashed password
+// This approach is not secure enough because we just used ordinary 
+// SHA-256 to hash the password. Please use more secure one for serious
+// purposes.
 struct user_entry {
-    std::string user_uid;
-    std::string pass_hash;
+    std::string user_uid;   // Unique ID
+    std::string pass_hash;  // Hashed password
 };
 
+// Connection Context contains an addr, a bind/empty uid, and a status
 class conn_ctx {
-    struct sockaddr_in conn_addr;
-    std::string conn_bind_uid;
-    int conn_status;
+    struct sockaddr_in conn_addr;   // Connection Addr Info
+    std::string conn_bind_uid;      // Binded/Empty user unique ID
+    int conn_status;                // Connection Status
 public:
     conn_ctx() {
         std::memset(&conn_addr, 0, sizeof(conn_addr));
@@ -66,13 +73,13 @@ public:
     }
 };
 
+// The user storage is in memory, no persistence. Just for demonstration.
+// Please consider using a database if you'd like to go further.
 class user_store {
     std::vector<struct user_entry> users;
 public:
     static std::string get_pass_hash(std::string password) {
         std::string ret;
-        if(sodium_init() < 0)
-            return ret;
         unsigned char hash[crypto_hash_sha256_BYTES];
         if(crypto_hash_sha256(hash, reinterpret_cast<const unsigned char *>(password.c_str()),password.size()) == 0)
             ret = reinterpret_cast<const char *>(hash);
@@ -94,7 +101,7 @@ public:
         return ((idx >= 0) && (idx < users.size()));
     }
     bool add_user(std::string user_uid, std::string user_password) {
-        if(user_uid.empty() || user_password.empty() || sodium_init() < 0)
+        if(user_uid.empty() || user_password.empty())
             return false;
         if(is_in_store(user_uid))
             return false;
@@ -107,7 +114,7 @@ public:
         return true;
     }
     bool is_user_pass_valid(std::string user_uid, std::string provided_password) {
-        if(user_uid.empty() || provided_password.empty() || sodium_init() < 0)
+        if(user_uid.empty() || provided_password.empty())
             return false;
         auto idx = get_user_idx(user_uid);
         if(idx < 0 || idx >= users.size())
@@ -119,7 +126,8 @@ public:
     }
 };
 
-class echo_server_udp {
+// The main class.
+class udp_chatroom {
     struct sockaddr_in address; // socket addr
     uint16_t port;              // port number
     int server_fd;              // generated server file descriptor
@@ -130,7 +138,7 @@ class echo_server_udp {
     
 public:
     // A simple constructor
-    echo_server_udp() {
+    udp_chatroom() {
         server_fd = -1;
         port = default_port;
         err_code = 0;
@@ -140,6 +148,9 @@ public:
         buff_size = init_buffsize;
         clients.clear();
     }
+
+    // You can add more constructors to initialize a server.
+    // ...
 
     // Close server and possible FD
     bool close_server(int err) {
@@ -163,11 +174,11 @@ public:
             return close_server(1);
         if(bind(server_fd, (sockaddr *)&address, (socklen_t)sizeof(address)))
             return close_server(3);
-        std::cout << "UDP Chatroom Service started." << std::endl;
-        std::cout << "UDP Listening Port: " << port << std::endl;
+        std::cout << "UDP Chatroom Service started." << std::endl << "UDP Listening Port: " << port << std::endl;
         return true;
     }
     
+    // Get the vector index of clients<> according to a client_addr
     ssize_t get_conn_idx(struct sockaddr_in client_addr) {
         auto it = std::find_if(clients.begin(), clients.end(), [&client_addr](const conn_ctx& ctx_elem) {
             struct sockaddr_in ctx_addr = *(ctx_elem.get_conn_addr());
@@ -180,10 +191,12 @@ public:
         return std::distance(clients.begin(), it);
     }
 
+    // Whether an addr is already in the clients<> pool or not.
     bool is_connected(struct sockaddr_in client_addr) {
         return get_conn_idx(client_addr) != clients.size();
     }
 
+    // Assemble the message header for a connection context
     std::string assemble_msg_header(conn_ctx& ctx) {
         struct sockaddr_in addr = *(ctx.get_conn_addr());
         char ip_cstr[INET_ADDRSTRLEN];
@@ -193,15 +206,17 @@ public:
         return oss.str(); 
     }
 
+    // Simplify the socket send function.
     int simple_send(const void *buff, size_t n, struct sockaddr_in client_addr) {
         auto ret = sendto(server_fd, buff, n, MSG_CONFIRM, (struct sockaddr *)&client_addr, sizeof(client_addr));
         if(ret < 0) {
             auto idx = get_conn_idx(client_addr);
-            clients.erase(clients.begin() + idx);
+            clients.erase(clients.begin() + idx); // If socket error, just delete the connection
         }
         return ret;
     }
 
+    // Convert an addr to a message
     std::string addr_to_msg(const struct sockaddr_in addr) {
         std::ostringstream oss;
         char ip_cstr[INET_ADDRSTRLEN];
@@ -210,6 +225,7 @@ public:
         return oss.str();
     }
 
+    // Get the index of clients<> according to a user_uid
     ssize_t get_client_idx(std::string user_uid) {
         auto it = std::find_if(clients.begin(), clients.end(), [&user_uid](const conn_ctx& elem) {
             return elem.get_bind_uid() == user_uid;
@@ -220,6 +236,7 @@ public:
             return std::distance(clients.begin(), it);
     }
 
+    // Broadcasting to all connected clients (include or exclude current/self).
     size_t system_broadcasting(bool include_self, std::string user_uid, std::string& msg_body) {
         std::string msg = "[SYSTEM BROADCASTING]: [UID] ";
         msg += user_uid;
@@ -236,7 +253,7 @@ public:
         return sent_out;
     }
 
-    // Accept messages and echo back
+    // Main processing method.
     int run_server(void) {
         if(server_fd == -1) {
             std::cout << "Server not started." << std::endl;
@@ -342,7 +359,7 @@ public:
                 }
                 else {
                     std::string user_uid = client.get_bind_uid();
-                    if(buff_str == "q!") {
+                    if(buff_str == "~:q!") {
                         simple_send(signed_out, sizeof(signed_out), client_addr);
                         std::string msg_body = " signed out !!!\n";
                         system_broadcasting(false, user_uid, msg_body);
@@ -363,12 +380,17 @@ public:
     }
 };
 
+// The simplest driver. You can improve it if you'd like to go further.
 int main(int argc, char **argv) {
-    echo_server_udp new_server;
+    udp_chatroom new_server;
+    if(sodium_init() < 0) {
+        std::cout << "Failed to init libsodium." << std::endl;
+        return 1;
+    }
     if(!new_server.start_server()) {
         std::cout << "Failed to start server. Error Code: " 
                   << new_server.get_last_error() << std::endl;
-        return 1;
+        return 3;
     }
     return new_server.run_server();
 }
