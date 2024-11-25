@@ -20,12 +20,12 @@ constexpr char main_menu[] = "1. signup\n2. signin\nPlease choose (1 | 2): ";
 constexpr char input_username[] = "Username: ";
 constexpr char input_password[] = "Password: ";
 constexpr char option_error[] = "option error, please input 1 or 2\n";
-constexpr char user_uid_exist[] = "user already exist.\n";
-constexpr char user_uid_error[] = "user not exist.\n";
+constexpr char user_uid_exist[] = "user already exists.\n";
+constexpr char user_uid_error[] = "user does not exist.\n";
 constexpr char password_error[] = "password doesn't match.\n";
 constexpr char signup_ok[] = "signed up and signed in.\nq! to sign out.\n";
 constexpr char signin_ok[] = "signed in.\nsend ~:q! to sign out.\n";
-constexpr char signed_out[] = "!!! signed out.\n";
+constexpr char signed_out[] = "[SYSTEM] !!! you have signed out.\n";
 constexpr char user_already_signin[] = "user already signed in at: ";
 
 // Each user entry include a unique id and a hashed password
