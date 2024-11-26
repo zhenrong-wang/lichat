@@ -79,9 +79,16 @@ class user_store {
 public:
     static std::string get_pass_hash(std::string password) {
         std::string ret;
-        unsigned char hash[crypto_hash_sha256_BYTES];
-        if(crypto_hash_sha256(hash, reinterpret_cast<const unsigned char *>(password.c_str()),password.size()) == 0)
-            ret = reinterpret_cast<const char *>(hash);
+        char hashed_pwd[crypto_pwhash_STRBYTES];
+        if(crypto_pwhash_str(
+            hashed_pwd, 
+            (password.c_str()), 
+            password.size(), 
+            crypto_pwhash_OPSLIMIT_INTERACTIVE, 
+            crypto_pwhash_MEMLIMIT_INTERACTIVE
+            ) == 0 ) {
+            ret = hashed_pwd;
+        };
         return ret;
     }
     ssize_t get_user_idx(std::string user_uid) {
@@ -118,10 +125,10 @@ public:
         auto idx = get_user_idx(user_uid);
         if(idx < 0 || idx >= users.size())
             return false;
-        std::string pass_hash = get_pass_hash(provided_password);
-        if(pass_hash.empty())
-            return false;
-        return pass_hash == users[idx].pass_hash;
+        return crypto_pwhash_str_verify(
+            users[idx].pass_hash.c_str(), 
+            provided_password.c_str(), 
+            provided_password.size()) == 0;
     }
 };
 
