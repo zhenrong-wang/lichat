@@ -37,7 +37,8 @@ constexpr char signup_ok[] = "signed up and signed in.\nsend ~:q! to sign out.\n
 constexpr char signin_ok[] = "signed in.\nsend ~:q! to sign out.\n";
 constexpr char signed_out[] = "[SYSTEM] you have signed out.\n";
 constexpr char user_already_signin[] = "user already signed in at: ";
-constexpr char cannot_at_or_to[] = "[SYSTEM] target user not signed in.\n";
+constexpr char cannot_at_or_to_user[] = "[SYSTEM] target user not signed in.\n";
+constexpr char cannot_at_or_to_self[] = "[SYSTEM] you cannot tag or send message to yourself.\n";
 constexpr char been_tagged[] = "[SYSTEM] you've been tagged !\n";
 constexpr size_t MSG_ATTR_LEN = 3;
 constexpr char to_user[MSG_ATTR_LEN] = {'~', '-', '>'};
@@ -318,7 +319,7 @@ public:
         return oss.str();
     }
 
-    bool msg_precheck(const std::string& buff_str, struct msg_attr& attr) {
+    int msg_precheck(const conn_ctx& this_ctx, const std::string& buff_str, struct msg_attr& attr) {
         auto is_private_msg = (std::memcmp(buff_str.c_str(), to_user, MSG_ATTR_LEN) == 0);
         auto is_tagged_msg = (std::memcmp(buff_str.c_str(), tag_user, MSG_ATTR_LEN) == 0);
         if(is_private_msg || is_tagged_msg) {
@@ -329,23 +330,25 @@ public:
                 target_user = buff_str.substr(start_pos); 
             else
                 target_user = buff_str.substr(start_pos, delim_pos - start_pos);
+            if(target_user == this_ctx.get_bind_uid())
+                return -1; // User cannot tag or send private messages to self
             if(all_users.is_in_db(target_user)) { // If the target uid is valid
                 if(!is_user_signed_in(target_user))
-                    return false;   // tagged or private message requires target user signed in.
-                                    // false will bounce the msg back to sender.
+                    return 1;   // tagged or private message requires target user signed in.
+                                // false will bounce the msg back to sender.
                 attr.target_uid = target_user;
                 attr.target_ctx_idx = get_client_idx(target_user);
                 if(!is_private_msg) 
                     attr.msg_attr_mask = 1; // Public but tagged
                 else
                     attr.msg_attr_mask = 2; // Private
-                return true; // msg_attr_mask set and return true
+                return 0; // msg_attr_mask set and return true
             }
             // If the target user uid is invalid, do nothing
-            return true;
+            return 0;
         }
         // If normal message, do nothing.
-        return true;
+        return 0;
     } 
 
     // Assemble the message header for a connection context
@@ -508,8 +511,13 @@ public:
                     }
                     else {
                         struct msg_attr attr;
-                        if(!msg_precheck(buff_str, attr)) {
-                            simple_send(cannot_at_or_to, sizeof(cannot_at_or_to), client_addr);
+                        auto check = msg_precheck(client, buff_str, attr);
+                        if(check == 1) {
+                            simple_send(cannot_at_or_to_user, sizeof(cannot_at_or_to_user), client_addr);
+                            continue;
+                        }
+                        if(check == -1) {
+                            simple_send(cannot_at_or_to_self, sizeof(cannot_at_or_to_self), client_addr);
                             continue;
                         }
                         update_msg_buffer(buffer, attr, client);
