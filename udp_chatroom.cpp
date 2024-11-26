@@ -13,6 +13,7 @@
 #include <cstring>      // For C string 
 #include <algorithm>    // For std::find_if
 #include <sstream>      // For stringstream
+#include <unordered_map>
 
 constexpr uint16_t default_port = 8081;
 constexpr size_t init_buffsize = 1024;
@@ -74,8 +75,8 @@ public:
 
 // The user storage is in memory, no persistence. Just for demonstration.
 // Please consider using a database if you'd like to go further.
-class user_store {
-    std::vector<struct user_entry> users;
+class user_database {
+    std::unordered_map<std::string, user_entry> user_db;
 public:
     static std::string get_pass_hash(std::string password) {
         std::string ret;
@@ -91,42 +92,39 @@ public:
         };
         return ret;
     }
-    ssize_t get_user_idx(std::string user_uid) {
-        if(user_uid.empty())
-            return -1;
-        auto it = std::find_if(users.begin(), users.end(), [&user_uid](const struct user_entry elem) {
-            return user_uid == elem.user_uid;
-        });
-        if(it == users.end())
-            return users.size();
+    user_entry *get_user_entry(std::string user_uid) {
+        auto it = user_db.find(user_uid);
+        if(it != user_db.end()) 
+            return &(it->second);
         else
-            return std::distance(users.begin(), it);
+            return nullptr;
     }
-    bool is_in_store(std::string user_uid) {
-        auto idx = get_user_idx(user_uid);
-        return ((idx >= 0) && (idx < users.size()));
+    bool is_in_db(std::string user_uid) {
+        return user_db.find(user_uid) != user_db.end();
     }
     bool add_user(std::string user_uid, std::string user_password) {
         if(user_uid.empty() || user_password.empty())
             return false;
-        if(is_in_store(user_uid))
+        if(is_in_db(user_uid))
             return false;
         struct user_entry new_user;
         new_user.user_uid = user_uid;
         new_user.pass_hash = get_pass_hash(user_password);
         if(new_user.pass_hash.empty())
             return false;
-        users.push_back(new_user);
+        user_db[user_uid] = new_user;
         return true;
     }
     bool is_user_pass_valid(std::string user_uid, std::string provided_password) {
         if(user_uid.empty() || provided_password.empty())
             return false;
-        auto idx = get_user_idx(user_uid);
-        if(idx < 0 || idx >= users.size())
+        if(!is_in_db(user_uid))
+            return false;
+        auto ptr_user = get_user_entry(user_uid);
+        if(ptr_user == nullptr)
             return false;
         return crypto_pwhash_str_verify(
-            users[idx].pass_hash.c_str(), 
+            (ptr_user->pass_hash).c_str(), 
             provided_password.c_str(), 
             provided_password.size()) == 0;
     }
@@ -139,7 +137,7 @@ class udp_chatroom {
     int server_fd;              // generated server file descriptor
     size_t buff_size;           // io buffer size
     int err_code;               // error code
-    user_store all_users;       // all users
+    user_database all_users;       // all users
     std::vector<conn_ctx> clients; // clients
     
 public:
@@ -310,7 +308,7 @@ public:
                 }
                 else if(stat == 2 || stat == 3) {
                     if(stat == 2) {
-                        if(all_users.is_in_store(buff_str)) {
+                        if(all_users.is_in_db(buff_str)) {
                             simple_send(user_uid_exist, sizeof(user_uid_exist), client_addr);
                             client.reset_conn();
                         }
@@ -321,7 +319,7 @@ public:
                         }
                     }
                     else {
-                        if(!all_users.is_in_store(buff_str)) {
+                        if(!all_users.is_in_db(buff_str)) {
                             simple_send(user_uid_error, sizeof(user_uid_error), client_addr);
                             client.reset_conn();
                         }
