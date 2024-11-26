@@ -370,9 +370,9 @@ public:
         if(attr.msg_attr_mask != 0)
             buffer.erase(buffer.begin(), buffer.begin() + MSG_ATTR_LEN + attr.target_uid.size() + 1);
         if(attr.msg_attr_mask == 1) 
-            msg_header += (std::string("@@") + attr.target_uid + std::string(" "));
+            msg_header += (std::string("@tagged@") + attr.target_uid + std::string(" "));
         else if(attr.msg_attr_mask == 2)
-            msg_header += (std::string("**") + std::string(" "));
+            msg_header += (std::string("*private*") + std::string(" "));
         buffer.insert(buffer.begin(), msg_header.c_str(), msg_header.c_str() + msg_header.size());
         buffer.back() = '\n';
         buffer.push_back('\n');
