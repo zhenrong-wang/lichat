@@ -1,7 +1,7 @@
 // This is the *simplest* UDP (Message based) echo server in C++ for learning
 // Originally written by Zhenrong WANG (zhenrongwang@live.com | X/Twitter: @wangzhr4)
 // Prerequisites: libsodium. You need to install it before compiling this code
-// Compile: g++ upd_chatroom.cpp -lsodium
+// Compile: g++ udp_chatroom.cpp -lsodium
 
 #include <iostream>
 #include <sys/socket.h>
@@ -23,7 +23,7 @@ constexpr char option_error[] = "option error, please input 1 or 2\n";
 constexpr char user_uid_exist[] = "user already exists.\n";
 constexpr char user_uid_error[] = "user does not exist.\n";
 constexpr char password_error[] = "password doesn't match.\n";
-constexpr char signup_ok[] = "signed up and signed in.\nq! to sign out.\n";
+constexpr char signup_ok[] = "signed up and signed in.\nsend ~:q! to sign out.\n";
 constexpr char signin_ok[] = "signed in.\nsend ~:q! to sign out.\n";
 constexpr char signed_out[] = "[SYSTEM] !!! you have signed out.\n";
 constexpr char user_already_signin[] = "user already signed in at: ";
