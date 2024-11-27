@@ -22,7 +22,7 @@ constexpr size_t uid_minlen = 4;
 constexpr size_t password_maxlen = 32;
 constexpr size_t password_minlen = 4;
 constexpr uint16_t default_port = 8081;
-constexpr size_t init_buffsize = 1024;
+constexpr size_t init_buffsize = 4096;
 constexpr char special_chars[] = "~!@#$%^&(){}[]-_=+;:,.<>/|";
 constexpr char main_menu[] = "1. signup\n2. signin\nPlease choose (1 | 2): ";
 constexpr char input_username[] = "Username: ";
@@ -466,7 +466,7 @@ public:
         if(attr.msg_attr_mask == 1) 
             msg_header += (std::string("@tagged@") + attr.target_uid + std::string(" "));
         else if(attr.msg_attr_mask == 2)
-            msg_header += (std::string("*private*") + std::string(" "));
+            msg_header += (std::string("*privto*") + attr.target_uid + std::string(" "));
         buffer.insert(buffer.begin(), msg_header.c_str(), msg_header.c_str() + msg_header.size());
         buffer.back() = '\n';
         buffer.push_back('\n');
