@@ -645,6 +645,7 @@ public:
                 }
                 auto client_idx = get_client_idx(buff_str);
                 if(client_idx != clients.size()) {
+                    std::cout << client_idx << ",,,,,,,,,,,,,,,,,,,,,\n";
                     simple_send(user_already_signin, sizeof(user_already_signin), client_addr);
                     std::string addr_msg = addr_to_msg(*(clients[client_idx].get_conn_addr()));
                     simple_send(addr_msg.c_str(), addr_msg.size(), client_addr);
