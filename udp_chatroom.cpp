@@ -32,14 +32,21 @@ constexpr char user_uid_exist[] = "user already exists.\n";
 constexpr char user_uid_error[] = "user does not exist.\n";
 constexpr char password_error[] = "password doesn't match.\n";
 constexpr char length_error[] = "invalid length. user_uid: 4-64. password: 4-32\n";
-constexpr char invalid_char_error[] = "invalid char.\nuser_uid: A(a)lphabet, numbers, and hyphen-\nuser_password: A(a)lphabet, numbers, and special chars, no spaces.\n";
+constexpr char invalid_char_error[] = "invalid char.\n\
+                                    user_uid: A(a)lphabet, numbers, and hyphen-\n\
+                                    user_password: A(a)lphabet, numbers, and special chars, no spaces.\n";
 constexpr char signup_ok[] = "signed up and signed in.\nsend ~:q! to sign out.\n";
-constexpr char signin_ok[] = "signed in.\nsend ~:q! to sign out.\n";
+constexpr char signin_ok[] = "signed in.\nsend ~:q! to sign out.\n\
+                              send ~-@uid: to tag another user.\n\
+                              send ~->uid: to send private messages to another user\n";
 constexpr char signed_out[] = "[SYSTEM] you have signed out.\n";
 constexpr char user_already_signin[] = "user already signed in at: ";
+constexpr char user_resign_in[] = "would you like to sign out that connection and resign in here? (yes | no)\n";
+constexpr char not_yes_or_no[] = "option error, please send either yes or no\n";
+constexpr char connection_reset[] = "this connection has been reset.\n";
 constexpr char cannot_at_or_to_user[] = "[SYSTEM] target user not signed in.\n";
-constexpr char cannot_at_or_to_self[] = "[SYSTEM] you cannot tag or send message to yourself.\n";
-constexpr char been_tagged[] = "[SYSTEM] you've been tagged !\n";
+constexpr char cannot_at_or_to_self[] = "[SYSTEM] you cannot tag or send privated messages to yourself.\n";
+constexpr char been_tagged[] = "[SYSTEM] you've been tagged!";
 constexpr size_t MSG_ATTR_LEN = 3;
 constexpr char to_user[MSG_ATTR_LEN] = {'~', '-', '>'};
 constexpr char tag_user[MSG_ATTR_LEN] = {'~', '-', '@'};
@@ -52,6 +59,37 @@ constexpr char user_delim = ':';
 struct user_entry {
     std::string user_uid;   // Unique ID
     std::string pass_hash;  // Hashed password
+};
+
+class ctx_user_bind_buffer {
+    std::string user_uid;
+    size_t ctx_idx_prev;
+    bool is_set;
+public:
+    ctx_user_bind_buffer() {
+        user_uid.clear();
+        ctx_idx_prev = 0;
+        is_set = false;
+    }
+    void set_bind_buffer(std::string uid, ssize_t idx) {
+        user_uid = uid;
+        ctx_idx_prev = idx;
+        is_set = true;
+    }
+    void unset_bind_buffer(void) {
+        user_uid.clear();
+        ctx_idx_prev = 0;
+        is_set = false;
+    }
+    bool is_set_bufer(void) const {
+        return is_set;
+    }
+    std::string get_user_uid() {
+        return user_uid;
+    }
+    size_t get_prev_ctx_idx() {
+        return ctx_idx_prev;
+    }
 };
 
 struct msg_attr {
@@ -266,6 +304,12 @@ public:
         return ret;
     }
 
+    int notify_reset_conn(const void *msg, size_t size_of_msg, conn_ctx& ctx) {
+        int ret = simple_send(msg, size_of_msg, *(ctx.get_conn_addr()));
+        ctx.reset_conn();
+        return ret;
+    }
+
     // Convert an addr to a message
     std::string addr_to_msg(const struct sockaddr_in addr) {
         std::ostringstream oss;
@@ -389,6 +433,7 @@ public:
         size_t addr_len = sizeof(client_addr);
         std::vector<char> buffer(buff_size, 0);
         std::string msg_header;
+        ctx_user_bind_buffer bind_buffer;
         while(true) {
             std::fill(buffer.begin(), buffer.end(), 0);
             auto bytes_recv = recvfrom(server_fd, buffer.data(), buffer.size(), \
@@ -400,148 +445,167 @@ public:
             std::cout << ">> Received from: " << std::endl << inet_ntoa(client_addr.sin_addr) \
                       << ':' << ntohs(client_addr.sin_port) << '\t' << buffer.data() << std::endl;
             auto conn_idx = get_conn_idx(client_addr);
+
+            // New connection, initialize it.
             if(conn_idx == clients.size()) {
                 conn_ctx new_conn;
                 new_conn.set_conn_addr(client_addr);
                 simple_send(main_menu, sizeof(main_menu), client_addr);
                 new_conn.set_status(1);
                 clients.push_back(new_conn);
+                continue;
             }
-            else {
-                auto& client = clients[conn_idx];
-                auto stat = client.get_status();
-                if(stat == 0) {
-                    simple_send(main_menu, sizeof(main_menu), client_addr);
-                    client.set_status(1);
+
+            // conn_idx is valid. Start processing.
+            auto& client = clients[conn_idx];
+            auto stat = client.get_status();
+            if(stat == 0) {
+                simple_send(main_menu, sizeof(main_menu), client_addr);
+                client.set_status(1);
+                continue;
+            }
+
+
+            if(stat == 100) { // Waiting for yes or no
+                if(buff_str != "yes" && buff_str != "no") {
+                    simple_send(not_yes_or_no, sizeof(not_yes_or_no), client_addr);
+                    continue;
                 }
-                else if(stat == 1) {
-                    if(buff_str == "1") {
-                        simple_send(input_username, sizeof(input_username), client_addr);
-                        client.set_status(2); // Sign up
-                    }
-                    else if(buff_str == "2") {
-                        simple_send(input_username, sizeof(input_username), client_addr);
-                        client.set_status(3); // Sign in
-                    }
-                    else {
-                        simple_send(option_error, sizeof(option_error), client_addr);
-                        client.reset_conn();
-                    }
+                if(buff_str == "yes") {
+                    clients[bind_buffer.get_prev_ctx_idx()].reset_conn();
+                    client.set_bind_uid(bind_buffer.get_user_uid());
+                    bind_buffer.unset_bind_buffer();
+                    simple_send(input_password, sizeof(input_password), client_addr);
+                    client.set_status(5);
+                    continue;
                 }
-                else if(stat == 2 || stat == 3) {
-                    int flag = all_users.user_uid_check(buff_str);
-                    if(flag == -1) {
-                        simple_send(length_error, sizeof(length_error), client_addr);
-                        client.reset_conn(); continue;
-                    }
-                    if(flag == 1) {
-                        simple_send(invalid_char_error, sizeof(invalid_char_error), client_addr);
-                        client.reset_conn(); continue;
-                    }
-                    if(stat == 2) {
-                        if(all_users.is_in_db(buff_str)) {
-                            simple_send(user_uid_exist, sizeof(user_uid_exist), client_addr);
-                            client.reset_conn();
-                        }
-                        else {
-                            simple_send(input_password, sizeof(input_password), client_addr);
-                            client.set_bind_uid(buff_str);
-                            client.set_status(4);
-                        }
-                    }
-                    else {
-                        if(!all_users.is_in_db(buff_str)) {
-                            simple_send(user_uid_error, sizeof(user_uid_error), client_addr);
-                            client.reset_conn();
-                        }
-                        else {
-                            auto client_idx = get_client_idx(buff_str);
-                            if(client_idx != clients.size()) {
-                                simple_send(user_already_signin, sizeof(user_already_signin), client_addr);
-                                std::string addr_msg = addr_to_msg(*(client.get_conn_addr()));
-                                simple_send(addr_msg.c_str(), addr_msg.size(), client_addr);
-                                client.reset_conn();
-                            }
-                            else {
-                                simple_send(input_password, sizeof(input_password), client_addr);
-                                client.set_bind_uid(buff_str);
-                                client.set_status(5);
-                            }
-                        }
-                    }
+                notify_reset_conn(connection_reset, sizeof(connection_reset), client);
+                continue;
+            }
+            
+            if(stat == 1) {
+                if(buff_str != "1" && buff_str != "2") {
+                    notify_reset_conn(option_error, sizeof(option_error), client);
+                    continue;
                 }
-                else if(stat == 4 || stat == 5) {
-                    int flag = all_users.pass_str_check(buff_str);
-                    if(flag == -1) {
-                        simple_send(length_error, sizeof(length_error), client_addr);
-                        client.reset_conn(); continue;
-                    }
-                    if(flag == 1) {
-                        simple_send(invalid_char_error, sizeof(invalid_char_error), client_addr);
-                        client.reset_conn(); continue;
-                    }
-                    std::string user_uid = client.get_bind_uid();
-                    if(stat == 4) {
-                        all_users.add_user(user_uid, buff_str);
-                        simple_send(signup_ok, sizeof(signup_ok), client_addr);
-                        std::string msg_body = " signed up and in !\n";
-                        system_broadcasting(false, user_uid, msg_body);
-                        client.set_status(6);
-                    }
-                    else {
-                        if(all_users.is_user_pass_valid(user_uid, buff_str)) {
-                            simple_send(signin_ok, sizeof(signin_ok), client_addr);
-                            std::string msg_body = " signed in !\n";
-                            system_broadcasting(false, user_uid, msg_body);
-                            client.set_status(6);
-                        }
-                        else {
-                            simple_send(password_error, sizeof(password_error), client_addr);
-                            client.reset_conn();
-                        }
-                    }
+                if(buff_str == "1") {
+                    simple_send(input_username, sizeof(input_username), client_addr);
+                    client.set_status(2); // Sign up
                 }
                 else {
-                    std::string user_uid = client.get_bind_uid();
-                    if(buff_str == "~:q!") {
-                        simple_send(signed_out, sizeof(signed_out), client_addr);
-                        std::string msg_body = " signed out !\n";
-                        system_broadcasting(false, user_uid, msg_body);
-                        client.reset_conn();
+                    simple_send(input_username, sizeof(input_username), client_addr);
+                    client.set_status(3); // Sign in
+                }
+                continue;
+            }
+
+            if(stat == 2 || stat == 3) {
+                auto flag = all_users.user_uid_check(buff_str);
+                if(flag == -1) {
+                    notify_reset_conn(length_error, sizeof(length_error), client);
+                    continue;
+                }
+                if(flag == 1) {
+                    notify_reset_conn(invalid_char_error, sizeof(invalid_char_error), client);
+                    continue;
+                }
+                if(stat == 2) {
+                    if(all_users.is_in_db(buff_str)) {
+                        notify_reset_conn(user_uid_exist, sizeof(user_uid_exist), client);
+                        continue;
                     }
-                    else {
-                        struct msg_attr attr;
-                        auto check = msg_precheck(client, buff_str, attr);
-                        if(check == 1) {
-                            simple_send(cannot_at_or_to_user, sizeof(cannot_at_or_to_user), client_addr);
-                            continue;
-                        }
-                        if(check == -1) {
-                            simple_send(cannot_at_or_to_self, sizeof(cannot_at_or_to_self), client_addr);
-                            continue;
-                        }
-                        update_msg_buffer(buffer, attr, client);
-                        if(attr.msg_attr_mask == 0) {
-                            for(auto& item : clients) {
-                                if(item.get_status() == 6)
-                                    simple_send(buffer.data(), buffer.size(), *(item.get_conn_addr()));
-                            }
-                        }
-                        else if(attr.msg_attr_mask == 1) {
-                            for(auto& item : clients) {
-                                if(item.get_status() == 6) {
-                                    if(item.get_bind_uid() == attr.target_uid)
-                                        simple_send(been_tagged, sizeof(been_tagged), *(clients[attr.target_ctx_idx].get_conn_addr()));
-                                    simple_send(buffer.data(), buffer.size(), *(item.get_conn_addr()));
-                                }
-                            }
-                        }
-                        else {
-                            simple_send(buffer.data(), buffer.size(), *(clients[attr.target_ctx_idx].get_conn_addr()));
-                        }
+                    simple_send(input_password, sizeof(input_password), client_addr);
+                    client.set_bind_uid(buff_str);
+                    client.set_status(4);
+                    continue;
+                }
+                
+                if(!all_users.is_in_db(buff_str)) {
+                    notify_reset_conn(user_uid_error, sizeof(user_uid_error), client);
+                    continue;
+                }
+                auto client_idx = get_client_idx(buff_str);
+                if(client_idx != clients.size()) {
+                    simple_send(user_already_signin, sizeof(user_already_signin), client_addr);
+                    std::string addr_msg = addr_to_msg(*(client.get_conn_addr()));
+                    simple_send(addr_msg.c_str(), addr_msg.size(), client_addr);
+                    simple_send(user_resign_in, sizeof(user_resign_in), client_addr);
+                    bind_buffer.set_bind_buffer(buff_str, client_idx);
+                    client.set_status(100);
+                    continue;
+                }
+                simple_send(input_password, sizeof(input_password), client_addr);
+                client.set_bind_uid(buff_str);
+                client.set_status(5);
+                continue;
+            }
+                
+            if(stat == 4 || stat == 5) {
+                auto flag = all_users.pass_str_check(buff_str);
+                if(flag == -1) {
+                    notify_reset_conn(length_error, sizeof(length_error), client);
+                    continue;
+                }
+                if(flag == 1) {
+                    notify_reset_conn(invalid_char_error, sizeof(invalid_char_error), client);
+                    continue;
+                }
+                std::string user_uid = client.get_bind_uid();
+                if(stat == 4) {
+                    all_users.add_user(user_uid, buff_str);
+                    simple_send(signup_ok, sizeof(signup_ok), client_addr);
+                    std::string msg_body = " signed up and in !\n";
+                    system_broadcasting(false, user_uid, msg_body);
+                    client.set_status(6);
+                    continue;
+                }
+                if(!all_users.is_user_pass_valid(user_uid, buff_str)) {
+                    notify_reset_conn(password_error, sizeof(password_error), client);
+                    continue;
+                }
+                simple_send(signin_ok, sizeof(signin_ok), client_addr);
+                std::string msg_body = " signed in !\n";
+                system_broadcasting(false, user_uid, msg_body);
+                client.set_status(6);
+                continue;
+            }
+            
+            std::string user_uid = client.get_bind_uid();
+            if(buff_str == "~:q!") {
+                notify_reset_conn(signed_out, sizeof(signed_out), client);
+                std::string msg_body = " signed out !\n";
+                system_broadcasting(false, user_uid, msg_body);
+                continue;
+            }
+            struct msg_attr attr;
+            auto check = msg_precheck(client, buff_str, attr);
+            if(check == 1) {
+                simple_send(cannot_at_or_to_user, sizeof(cannot_at_or_to_user), client_addr);
+                continue;
+            }
+            if(check == -1) {
+                simple_send(cannot_at_or_to_self, sizeof(cannot_at_or_to_self), client_addr);
+                continue;
+            }
+            update_msg_buffer(buffer, attr, client);
+            if(attr.msg_attr_mask == 0) {
+                for(auto& item : clients) {
+                    if(item.get_status() == 6)
+                        simple_send(buffer.data(), buffer.size(), *(item.get_conn_addr()));
+                }
+                continue;
+            }
+            if(attr.msg_attr_mask == 1) {
+                for(auto& item : clients) {
+                    if(item.get_status() == 6) {
+                        if(item.get_bind_uid() == attr.target_uid)
+                            simple_send(been_tagged, sizeof(been_tagged), *(clients[attr.target_ctx_idx].get_conn_addr()));
+                            simple_send(buffer.data(), buffer.size(), *(item.get_conn_addr()));
                     }
                 }
+                continue;
             }
+            simple_send(buffer.data(), buffer.size(), *(clients[attr.target_ctx_idx].get_conn_addr()));
         }
     }
 };
