@@ -610,7 +610,7 @@ public:
                     auto user_list_msg = user_list_to_msg();
                     simple_send(signup_ok, sizeof(signup_ok), client_addr);
                     simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
-                    std::string msg_body = " signed up and in!\n";
+                    std::string msg_body = " signed up and in!\n\n";
                     system_broadcasting(false, user_uid, msg_body);
                     client.set_status(6);
                     continue;
@@ -626,7 +626,7 @@ public:
                 auto user_list_msg = user_list_to_msg();
                 simple_send(signin_ok, sizeof(signin_ok), client_addr);
                 simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
-                std::string msg_body = " signed in!\n";
+                std::string msg_body = " signed in!\n\n";
                 system_broadcasting(false, user_uid, msg_body);
                 if(bind_buffer.is_set_buffer()) {
                     notify_reset_conn(client_switched, sizeof(client_switched), clients[bind_buffer.get_prev_ctx_idx()]);
@@ -639,7 +639,7 @@ public:
             std::string user_uid = client.get_bind_uid();
             if(buff_str == "~:q!") {
                 notify_reset_conn(signed_out, sizeof(signed_out), client);
-                std::string msg_body = " signed out!\n";
+                std::string msg_body = " signed out!\n\n";
                 system_broadcasting(false, user_uid, msg_body);
                 continue;
             }
