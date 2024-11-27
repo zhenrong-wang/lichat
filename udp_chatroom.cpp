@@ -115,11 +115,13 @@ struct msg_attr {
                             // 02 - private (target_uid and target_ctx_idx valid)
     std::string target_uid;
     ssize_t target_ctx_idx;
+    bool is_set;
 
-    msg_attr() {
+    void msg_attr_reset() {
         msg_attr_mask = 0;
         target_uid.clear();
         target_ctx_idx = -1;
+        is_set = false;
     }
 };
 
@@ -465,6 +467,7 @@ public:
     }
 
     int msg_precheck(const conn_ctx& this_ctx, const std::string& buff_str, struct msg_attr& attr) {
+        attr.msg_attr_reset(); // Reset all the attrbutes.
         auto is_private_msg = (std::memcmp(buff_str.c_str(), to_user, MSG_ATTR_LEN) == 0);
         auto is_tagged_msg = (std::memcmp(buff_str.c_str(), tag_user, MSG_ATTR_LEN) == 0);
         if(is_private_msg || is_tagged_msg) {
@@ -477,21 +480,26 @@ public:
                 target_user = buff_str.substr(start_pos, delim_pos - start_pos);
             if(target_user == this_ctx.get_bind_uid())
                 return -1; // User cannot tag or send private messages to self
+                           // Will not set the attrbutes.
             if(all_users.is_in_db(target_user)) { // If the target uid is valid
                 if(!is_user_signed_in(target_user))
                     return 1;   // tagged or private message requires target user signed in.
                                 // false will bounce the msg back to sender.
+                                // will not set the attributes.
                 attr.target_uid = target_user;
                 attr.target_ctx_idx = get_client_idx(target_user);
+                attr.is_set = true; // Attributes set.
                 if(!is_private_msg) 
                     attr.msg_attr_mask = 1; // Public but tagged
                 else
                     attr.msg_attr_mask = 2; // Private
                 return 0; // msg_attr_mask set and return true
             }
+            attr.is_set = true; // Attributes set.
             // If the target user uid is invalid, do nothing
             return 0;
         }
+        attr.is_set = true; // Attributes set.
         // If normal message, do nothing.
         return 0;
     } 
@@ -510,7 +518,9 @@ public:
     }
 
     // Must call msg_precheck first!!!
-    void update_msg_buffer(std::vector<char>& buffer, const struct msg_attr& attr, const conn_ctx& ctx) {
+    bool update_msg_buffer(std::vector<char>& buffer, const struct msg_attr& attr, const conn_ctx& ctx) {
+        if(!attr.is_set)
+            return false;
         std::string msg_header = assemble_msg_header(ctx);
         if(attr.msg_attr_mask != 0)
             buffer.erase(buffer.begin(), buffer.begin() + MSG_ATTR_LEN + attr.target_uid.size() + 1);
@@ -522,6 +532,7 @@ public:
         buffer.back() = '\n';
         buffer.push_back('\n');
         buffer.push_back('\0');
+        return true;
     }
 
     std::string user_list_to_msg() {
@@ -716,7 +727,11 @@ public:
                 simple_send(cannot_at_or_to_self, sizeof(cannot_at_or_to_self), client_addr);
                 continue;
             }
-            update_msg_buffer(buffer, attr, client);
+            if(!update_msg_buffer(buffer, attr, client)) {
+                std::string internal_bug = "internal error, probably a bug. Please report to us.\n";
+                system_broadcasting(true, "[ALL]", internal_bug);
+                continue;
+            }
             if(attr.msg_attr_mask == 0) {
                 for(auto& item : clients) {
                     if(item.get_status() == 6)
