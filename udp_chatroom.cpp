@@ -75,7 +75,7 @@ constexpr char user_delim = ':';
 struct user_entry {
     std::string user_uid;   // Unique ID
     std::string pass_hash;  // Hashed password
-    bool is_user_signin;   
+    uint8_t user_status;    // Currently, 0 - not in, 1 - signed in.
 };
 
 class ctx_user_bind_buffer {
@@ -270,6 +270,27 @@ public:
 
     std::string get_user_list() {
         return user_list_fmt;
+    }
+
+    std::string get_user_list(bool show_status) {
+        if(!show_status)
+            return get_user_list();
+        std::string list_with_status;
+        for(auto& it : user_db) {
+            if(it.second.user_status == 1)
+                list_with_status += (it.second.user_uid + "(in) ");
+            else
+                list_with_status += (it.second.user_uid) + " ";
+        }
+        return list_with_status;
+    }
+
+    bool set_user_status(std::string user_uid, uint8_t status) {
+        auto ptr = get_user_entry(user_uid);
+        if(ptr == nullptr)
+            return false;
+        ptr->user_status = status;
+        return true;
     }
 };
 
@@ -474,7 +495,7 @@ public:
     }
 
     std::string user_list_to_msg() {
-        std::string user_list_fmt = all_users.get_user_list();
+        std::string user_list_fmt = all_users.get_user_list(true);
         std::ostringstream oss;
         oss << "[SYSTEM_INFO] currently there are " << all_users.get_user_num()
             << " signed up users. List:\n" << user_list_fmt << "\n\n"; 
@@ -608,6 +629,7 @@ public:
                         continue;
                     }
                     all_users.add_user(user_uid, buff_str);
+                    all_users.set_user_status(user_uid, 1);
                     auto user_list_msg = user_list_to_msg();
                     simple_send(signup_ok, sizeof(signup_ok), client_addr);
                     simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
@@ -624,6 +646,7 @@ public:
                     notify_reset_conn(password_error, sizeof(password_error), client);
                     continue;
                 }
+                all_users.set_user_status(user_uid, 1);
                 auto user_list_msg = user_list_to_msg();
                 simple_send(signin_ok, sizeof(signin_ok), client_addr);
                 simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
@@ -633,6 +656,7 @@ public:
                     notify_reset_conn(client_switched, sizeof(client_switched), clients[bind_buffer.get_prev_ctx_idx()]);
                     bind_buffer.unset_bind_buffer();
                 }
+                
                 client.set_status(6);
                 continue;
             }
@@ -642,6 +666,7 @@ public:
                 notify_reset_conn(signed_out, sizeof(signed_out), client);
                 std::string msg_body = " signed out!\n\n";
                 system_broadcasting(false, user_uid, msg_body);
+                all_users.set_user_status(user_uid, 0);
                 continue;
             }
             struct msg_attr attr;
