@@ -31,11 +31,16 @@ constexpr char option_error[] = "option error, please input 1 or 2\n";
 constexpr char user_uid_exist[] = "user already exists.\n";
 constexpr char user_uid_error[] = "user does not exist.\n";
 constexpr char password_error[] = "password doesn't match.\n";
-constexpr char length_error[] = "invalid length. user_uid: 4-64. password: 4-32\n";
-constexpr char invalid_char_error[] = "invalid char, rules to follow:\n\
-user_uid: a-z, A-Z, numbers, and hyphen -\n\
-password: a-z, A-Z, numbers, and special chars, no spaces.\n\
-          must contains at least 3 out of 4 types above.\n";
+constexpr char invalid_uid_fmt[] = "invalid uid format, rules to follow:\n\
+    4-64 ascii chars.\n\
+    a-z, A-Z, numbers, and/or hyphen-.\n";
+constexpr char invalid_uid_len[] = "invalid uid length: 4-64\n";
+constexpr char invalid_pass_fmt[] = "invalid password format, rules to follow:\n\
+    4-32 ascii chars.\n\
+    a-z, A-Z, numbers, and special chars, no spaces.\n\
+    * must contains at least 3 out of 4 types above.\n";
+constexpr char invalid_pass[] = "not a valid password string.\n";
+constexpr char invalid_pass_len[] = "invalid password length: 4-32\n";
 constexpr char signup_ok[] = "[SYSTEM_WELCOME] signed up and signed in.\n\
 [SYSTEM_WELCOME] send ~:q! to sign out.\n\
 [SYSTEM_WELCOME] send ~-@uid: to tag another user.\n\
@@ -44,13 +49,14 @@ constexpr char signin_ok[] = "[SYSTEM_WELCOME] signed in.\n\
 [SYSTEM_WELCOME] send ~:q! to sign out.\n\
 [SYSTEM_WELCOME] send ~-@uid: to tag another user.\n\
 [SYSTEM_WELCOME] send ~->uid: to send private messages to another user.\n\n";
+constexpr char password_not_complex[] = "the password is not complex enough.\n";
 constexpr char signed_out[] = "[SYSTEM] you have signed out.\n";
 constexpr char user_already_signin[] = "user already signed in at client: ";
 constexpr char user_resign_in[] = "this signin would quit that client, are you sure? (yes | no)\n";
 constexpr char another_sign_warn[] = "[SYSTEM_WARN] another client is trying to sign in your uid!\n";
 constexpr char not_yes_or_no[] = "option error, please send either yes or no\n";
 constexpr char option_denied[] = "you sent no. nothing changed.\n";
-constexpr char client_switched[] = "another client. signed out here.\n";
+constexpr char client_switched[] = "you've resigned in on another client. signed out here.\n";
 constexpr char connection_reset[] = "this connection has been reset.\n\n";
 constexpr char cannot_at_or_to_user[] = "[SYSTEM] target user not signed in.\n";
 constexpr char cannot_at_or_to_self[] = "[SYSTEM] you cannot tag or send privated messages to yourself.\n";
@@ -228,7 +234,7 @@ public:
             return 1;
         }
         if(contain_num + contain_special_char + contain_lower_char + contain_upper_char < 3)
-            return 1;
+            return 2;
         return 0;
     }
 
@@ -550,11 +556,11 @@ public:
             if(stat == 2 || stat == 3) {
                 auto flag = all_users.user_uid_check(buff_str);
                 if(flag == -1) {
-                    notify_reset_conn(length_error, sizeof(length_error), client);
+                    notify_reset_conn(invalid_uid_len, sizeof(invalid_uid_len), client);
                     continue;
                 }
                 if(flag == 1) {
-                    notify_reset_conn(invalid_char_error, sizeof(invalid_char_error), client);
+                    notify_reset_conn(invalid_uid_fmt, sizeof(invalid_uid_fmt), client);
                     continue;
                 }
                 if(stat == 2) {
@@ -589,17 +595,17 @@ public:
             }
                 
             if(stat == 4 || stat == 5) {
-                auto flag = all_users.pass_str_check(buff_str);
-                if(flag == -1) {
-                    notify_reset_conn(length_error, sizeof(length_error), client);
-                    continue;
-                }
-                if(flag == 1) {
-                    notify_reset_conn(invalid_char_error, sizeof(invalid_char_error), client);
-                    continue;
-                }
                 std::string user_uid = client.get_bind_uid();
+                auto flag = all_users.pass_str_check(buff_str);
                 if(stat == 4) {
+                    if(flag == -1) {
+                        notify_reset_conn(invalid_pass_len, sizeof(invalid_pass_fmt), client);
+                        continue;
+                    }
+                    if(flag != 0) {
+                        notify_reset_conn(invalid_pass_fmt, sizeof(invalid_pass_fmt), client);
+                        continue;
+                    }
                     all_users.add_user(user_uid, buff_str);
                     auto user_list_msg = user_list_to_msg();
                     simple_send(signup_ok, sizeof(signup_ok), client_addr);
@@ -607,6 +613,10 @@ public:
                     std::string msg_body = " signed up and in!\n";
                     system_broadcasting(false, user_uid, msg_body);
                     client.set_status(6);
+                    continue;
+                }
+                if(flag != 0) {
+                    notify_reset_conn(invalid_pass, sizeof(invalid_pass), client);
                     continue;
                 }
                 if(!all_users.is_user_pass_valid(user_uid, buff_str)) {
