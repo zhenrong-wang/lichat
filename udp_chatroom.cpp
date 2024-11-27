@@ -164,18 +164,19 @@ class user_database {
     std::unordered_map<std::string, user_entry> user_db;
     std::string user_list_fmt;
 public:
-    static std::string get_pass_hash(std::string password) {
+    static std::string get_pass_hash(std::string& password) {
         std::string ret;
         char hashed_pwd[crypto_pwhash_STRBYTES];
         if(crypto_pwhash_str(
             hashed_pwd, 
-            (password.c_str()), 
+            password.c_str(), 
             password.size(), 
             crypto_pwhash_OPSLIMIT_INTERACTIVE, 
             crypto_pwhash_MEMLIMIT_INTERACTIVE
             ) == 0 ) {
             ret = hashed_pwd;
         };
+        password.clear(); // For security reasons, we clean the string after hashing. 
         return ret;
     }
     user_entry *get_user_entry(std::string user_uid) {
@@ -254,18 +255,26 @@ public:
         return true;
     }
 
-    bool is_user_pass_valid(std::string user_uid, std::string provided_password) {
-        if(user_uid.empty() || provided_password.empty())
+    bool is_user_pass_valid(std::string user_uid, std::string& provided_password) {
+        if(user_uid.empty() || provided_password.empty()) {
+            provided_password.clear();
             return false;
-        if(!is_in_db(user_uid))
+        }
+        if(!is_in_db(user_uid)) {
+            provided_password.clear();
             return false;
+        }
         auto ptr_user = get_user_entry(user_uid);
-        if(ptr_user == nullptr)
+        if(ptr_user == nullptr) {
+            provided_password.clear();
             return false;
-        return crypto_pwhash_str_verify(
+        }
+        auto ret = (crypto_pwhash_str_verify(
             (ptr_user->pass_hash).c_str(), 
             provided_password.c_str(), 
-            provided_password.size()) == 0;
+            provided_password.size()) == 0);
+        provided_password.clear();
+        return ret;
     }
 
     std::string get_user_list() {
@@ -291,6 +300,15 @@ public:
             return false;
         ptr->user_status = status;
         return true;
+    }
+
+    std::pair<size_t, size_t> get_user_stat() {
+        size_t in = 0;
+        for(auto& it : user_db) {
+            if(it.second.user_status == 1)
+                ++ in;
+        }
+        return std::make_pair(get_user_num(), in);
     }
 };
 
@@ -497,8 +515,10 @@ public:
     std::string user_list_to_msg() {
         std::string user_list_fmt = all_users.get_user_list(true);
         std::ostringstream oss;
-        oss << "[SYSTEM_INFO] currently there are " << all_users.get_user_num()
-            << " signed up users. List:\n" << user_list_fmt << "\n\n"; 
+        std::pair<size_t, size_t> stat_par = all_users.get_user_stat();
+        oss << "[SYSTEM_INFO] currently " << stat_par.first << " signed up users, " 
+            << stat_par.second << " signed in users. list:\n"
+            << "* (in) currently signed in.\n" << user_list_fmt << "\n\n"; 
         return oss.str();
     }
 
@@ -667,6 +687,11 @@ public:
                 std::string msg_body = " signed out!\n\n";
                 system_broadcasting(false, user_uid, msg_body);
                 all_users.set_user_status(user_uid, 0);
+                continue;
+            }
+            if(buff_str == "~:lu") {
+                auto user_list_msg = user_list_to_msg();
+                simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
                 continue;
             }
             struct msg_attr attr;
