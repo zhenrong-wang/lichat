@@ -4,11 +4,11 @@
 
 LiChat is a light-weight chat room service. It provides many features:
 
-- Super-light. It is UDP and message based, very easy to deploy.
-- Pure-service. It works with any UDP client from any platform.
-- Privacy. It doesn't store any message at the backend/server side.
-- Freedom. It is free software, and support free speech, no censorship.
-- Functional:
+- **Super-light**: It is UDP and message based, very easy to deploy.
+- **Pure-service**: It works with any UDP client from any platform.
+- **Privacy**: It doesn't store any message at the backend/server side.
+- **Freedom**: It is free software, and it supports free speech; no censorship.
+- **Functional** (currently minimal):
   - manages multiple clients
   - allows multiple users
   - processes text messages
@@ -28,7 +28,7 @@ The code works on **GNU/Linux** (maybe other Unix-like platforms), not on Micros
 
 But to make it clear, as a pure service, it works with any UDP clients.
 
-- Fork this repository or clone directry
+- Fork this repository or clone directly
 - Change directory to your local cloned dir
 - You will need a C++ compiler (e.g. Clang++ or g++), and pre-install the libsodium.
 - Build command: `g++ udp_chatroom.cpp -lsodium -o lichat`
@@ -38,9 +38,9 @@ But to make it clear, as a pure service, it works with any UDP clients.
 
 - Once service started, it would start receiving and processing UDP messages.
 - Any user can choose an UDP client such as `nc` on GNU/Linux to post messages, command:
-  - `nc -u SERVICE_IP_ADDR SERVICE_PORT`. e.g. `nc -u localhost 8081`
-- A fresh new client would be required to choose `signup | signin` and set or provide credentials
-- Once authenticated, users would be able to post public or private messages (aka. Chat)
+  - `nc -u SERVICE_IP_ADDR SERVICE_PORT` e.g. `nc -u localhost 8081`
+- A fresh new client would be required to choose `signup | signin` and set or provide credentials.
+- Once authenticated, users would be able to post public or private messages (aka. Chat).
 
 ## 4. Future Works
 
