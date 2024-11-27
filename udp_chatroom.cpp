@@ -146,7 +146,12 @@ public:
     void set_bind_uid(std::string uid) {
         conn_bind_uid = uid;
     }
-    void reset_conn() {
+    void reset_conn() { // Go back to status 1
+        conn_bind_uid.clear();
+        conn_status = 1;
+    }
+    void clear_conn() { // Clear everything
+        std::memset(&conn_addr, 0, sizeof(conn_addr));
         conn_bind_uid.clear();
         conn_status = 0;
     }
@@ -392,11 +397,18 @@ public:
         return ret;
     }
 
-    bool notify_reset_conn(const void *msg, size_t size_of_msg, conn_ctx& ctx) {
+    bool notify_reset_conn(const void *msg, size_t size_of_msg, conn_ctx& ctx, bool clean_client) {
         auto ret1 = simple_send(msg, size_of_msg, *(ctx.get_conn_addr()));
         auto ret2 = simple_send(connection_reset, sizeof(connection_reset), *(ctx.get_conn_addr()));
-        ctx.reset_conn();
-        return (ret1 > 0) && (ret2 > 0);
+        int ret3 = 1;
+        if(clean_client) {
+            ctx.clear_conn();
+        } 
+        else {
+            ret3 = simple_send(main_menu, sizeof(main_menu), *(ctx.get_conn_addr()));
+            ctx.reset_conn();
+        }  
+        return (ret1 >= 0) && (ret2 >= 0) && (ret3 >= 0);
     }
 
     // Convert an addr to a message
@@ -565,7 +577,7 @@ public:
             }
             if(stat == 100) { // Waiting for yes or no
                 if(buff_str != "yes" && buff_str != "no") {
-                    notify_reset_conn(not_yes_or_no, sizeof(not_yes_or_no), client);
+                    notify_reset_conn(not_yes_or_no, sizeof(not_yes_or_no), client, false);
                     continue;
                 }
                 if(buff_str == "yes") {
@@ -575,13 +587,13 @@ public:
                     client.set_status(5);
                 }
                 else {
-                    notify_reset_conn(option_denied, sizeof(option_denied), client);
+                    notify_reset_conn(option_denied, sizeof(option_denied), client, false);
                 }
                 continue;
             }
             if(stat == 1) {
                 if(buff_str != "1" && buff_str != "2") {
-                    notify_reset_conn(option_error, sizeof(option_error), client);
+                    notify_reset_conn(option_error, sizeof(option_error), client, false);
                     continue;
                 }
                 if(buff_str == "1") {
@@ -598,16 +610,16 @@ public:
             if(stat == 2 || stat == 3) {
                 auto flag = all_users.user_uid_check(buff_str);
                 if(flag == -1) {
-                    notify_reset_conn(invalid_uid_len, sizeof(invalid_uid_len), client);
+                    notify_reset_conn(invalid_uid_len, sizeof(invalid_uid_len), client, false);
                     continue;
                 }
                 if(flag == 1) {
-                    notify_reset_conn(invalid_uid_fmt, sizeof(invalid_uid_fmt), client);
+                    notify_reset_conn(invalid_uid_fmt, sizeof(invalid_uid_fmt), client, false);
                     continue;
                 }
                 if(stat == 2) {
                     if(all_users.is_in_db(buff_str)) {
-                        notify_reset_conn(user_uid_exist, sizeof(user_uid_exist), client);
+                        notify_reset_conn(user_uid_exist, sizeof(user_uid_exist), client, false);
                         continue;
                     }
                     simple_send(input_password, sizeof(input_password), client_addr);
@@ -617,7 +629,7 @@ public:
                 }
                 
                 if(!all_users.is_in_db(buff_str)) {
-                    notify_reset_conn(user_uid_error, sizeof(user_uid_error), client);
+                    notify_reset_conn(user_uid_error, sizeof(user_uid_error), client, false);
                     continue;
                 }
                 auto client_idx = get_client_idx(buff_str);
@@ -641,11 +653,11 @@ public:
                 auto flag = all_users.pass_str_check(buff_str);
                 if(stat == 4) {
                     if(flag == -1) {
-                        notify_reset_conn(invalid_pass_len, sizeof(invalid_pass_fmt), client);
+                        notify_reset_conn(invalid_pass_len, sizeof(invalid_pass_len), client, false);
                         continue;
                     }
                     if(flag != 0) {
-                        notify_reset_conn(invalid_pass_fmt, sizeof(invalid_pass_fmt), client);
+                        notify_reset_conn(invalid_pass_fmt, sizeof(invalid_pass_fmt), client, false);
                         continue;
                     }
                     all_users.add_user(user_uid, buff_str);
@@ -659,11 +671,11 @@ public:
                     continue;
                 }
                 if(flag != 0) {
-                    notify_reset_conn(invalid_pass, sizeof(invalid_pass), client);
+                    notify_reset_conn(invalid_pass, sizeof(invalid_pass), client, false);
                     continue;
                 }
                 if(!all_users.is_user_pass_valid(user_uid, buff_str)) {
-                    notify_reset_conn(password_error, sizeof(password_error), client);
+                    notify_reset_conn(password_error, sizeof(password_error), client, false);
                     continue;
                 }
                 all_users.set_user_status(user_uid, 1);
@@ -673,7 +685,7 @@ public:
                 std::string msg_body = " signed in!\n\n";
                 system_broadcasting(false, user_uid, msg_body);
                 if(bind_buffer.is_set_buffer()) {
-                    notify_reset_conn(client_switched, sizeof(client_switched), clients[bind_buffer.get_prev_ctx_idx()]);
+                    notify_reset_conn(client_switched, sizeof(client_switched), clients[bind_buffer.get_prev_ctx_idx()], true);
                     bind_buffer.unset_bind_buffer();
                 }
                 
@@ -683,7 +695,7 @@ public:
             
             std::string user_uid = client.get_bind_uid();
             if(buff_str == "~:q!") {
-                notify_reset_conn(signed_out, sizeof(signed_out), client);
+                notify_reset_conn(signed_out, sizeof(signed_out), client, true);
                 std::string msg_body = " signed out!\n\n";
                 system_broadcasting(false, user_uid, msg_body);
                 all_users.set_user_status(user_uid, 0);
