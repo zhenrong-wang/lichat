@@ -5,7 +5,6 @@
 LiChat is a light-weight chat room service. It provides many features:
 
 - **Super-light**: It is UDP and message based, very easy to deploy.
-- **Pure-service**: It works with any UDP client from any platform.
 - **Privacy**: It doesn't store any message at the backend/server side.
 - **Freedom**: It is free software, and it supports free speech; no censorship.
 - **Functional** (currently minimal):
@@ -13,8 +12,11 @@ LiChat is a light-weight chat room service. It provides many features:
   - allows multiple users
   - processes text messages
   - supports public chats, tagging users, and private messages.
+- **Secure**: message encryption (WIP)
 
 That's it, as simple and light as possible.
+
+Currently, there is only server code, the cross-platform client code is working in progress.
 
 ## 2. Technical Review
 
@@ -26,7 +28,7 @@ Please check the [file](./TR_UDP_CHATROOM.md) for all the technical details.
 
 The code works on **GNU/Linux** (maybe other Unix-like platforms), not on Microsoft Windows. 
 
-But to make it clear, as a pure service, it works with any UDP clients.
+But the client (WIP) would work on different platforms.
 
 - Fork this repository or clone directly
 - Change directory to your local cloned dir
@@ -37,11 +39,17 @@ But to make it clear, as a pure service, it works with any UDP clients.
 ### 3.2 How To Chat
 
 - Once service started, it would start receiving and processing UDP messages.
-- Any user can choose an UDP client such as `nc` on GNU/Linux to post messages, command:
+- Because the client is absent and in planning, currently you can choose an UDP client such as `nc` on GNU/Linux to post messages, command:
   - `nc -u SERVICE_IP_ADDR SERVICE_PORT` e.g. `nc -u localhost 8081`
 - A fresh new client would be required to choose `signup | signin` and set or provide credentials.
 - Once authenticated, users would be able to post public or private messages (aka. Chat).
 
-## 4. Future Works
+## 4. Problems and Future Works
 
-This project is in its very preliminery stage. It is functional, but there are still lots of things to do. If you are interested, please feel free to contribute.
+Currently the session management is done by `client addr`, which obviously is not suitable for real world asymmetric networking. The `client addr` probably drifts when the client device is in private network behind NAT or other devices. 
+
+Currently the messages are not encrypted. That's not good at all.
+
+In summary, this project is in its very preliminery stage. It is functional, but there are still lots of things to do. 
+
+If you are interested, please feel free to contribute.
