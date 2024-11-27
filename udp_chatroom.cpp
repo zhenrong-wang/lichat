@@ -717,6 +717,9 @@ public:
                 simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
                 continue;
             }
+            if(buff_str.empty()) {
+                continue; // Empty messages will be skipped.
+            }
             struct msg_attr attr;
             auto check = msg_precheck(client, buff_str, attr);
             if(check == 1) {
