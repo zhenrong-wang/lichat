@@ -46,10 +46,13 @@ But the client (WIP) would work on different platforms.
 
 ## 4. Problems and Future Works
 
-Currently the session management is done by `client addr`, which obviously is not suitable for real world asymmetric networking. The `client addr` probably drifts when the client device is in private network behind NAT or other devices. 
+Currently there are many problems:
 
-Currently the messages are not encrypted. That's not good at all.
+- The session management is done by `client addr`, which obviously is not suitable for real world asymmetric networks:
+  - The `client addr` probably drifts when the client device is in private network behind NAT or other devices.
+- The messages are not encrypted.
+- The user database is not persistent.
 
-In summary, this project is in its very preliminery stage. It is functional, but there are still lots of things to do. 
+Anyway, this project is in its very preliminery stage. It is functional, but there are still lots of things to do. 
 
 If you are interested, please feel free to contribute.
