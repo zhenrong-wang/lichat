@@ -60,8 +60,9 @@ constexpr char client_switched[] = "you've resigned in on another client. signed
 constexpr char connection_reset[] = "this connection has been reset.\n\n";
 constexpr char cannot_at_or_to_user[] = "[SYSTEM] target user not signed in.\n";
 constexpr char cannot_at_or_to_self[] = "[SYSTEM] you cannot tag or send privated messages to yourself.\n";
-constexpr char been_tagged[] = "[SYSTEM] you've been tagged!";
-constexpr char private_msg_recved[] = "[SYSTEM] you've received a private message!";
+constexpr char been_tagged[] = "[SYSTEM_NOTIFY] you've been tagged!";
+constexpr char private_msg_recved[] = "[SYSTEM_NOTIFY] you've received a private message!";
+constexpr char private_msg_sent[] = "[SYSTEM_INFO] you've sent a private message!";
 constexpr size_t MSG_ATTR_LEN = 3;
 constexpr char to_user[MSG_ATTR_LEN] = {'~', '-', '>'};
 constexpr char tag_user[MSG_ATTR_LEN] = {'~', '-', '@'};
@@ -671,6 +672,9 @@ public:
                 }
                 continue;
             }
+
+            simple_send(private_msg_sent, sizeof(private_msg_sent), client_addr);
+            simple_send(buffer.data(), buffer.size(), client_addr);
             simple_send(private_msg_recved, sizeof(private_msg_recved), *(clients[attr.target_ctx_idx].get_conn_addr()));
             simple_send(buffer.data(), buffer.size(), *(clients[attr.target_ctx_idx].get_conn_addr()));
         }
