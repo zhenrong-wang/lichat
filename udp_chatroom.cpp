@@ -32,21 +32,30 @@ constexpr char user_uid_exist[] = "user already exists.\n";
 constexpr char user_uid_error[] = "user does not exist.\n";
 constexpr char password_error[] = "password doesn't match.\n";
 constexpr char length_error[] = "invalid length. user_uid: 4-64. password: 4-32\n";
-constexpr char invalid_char_error[] = "invalid char.\n\
-                                    user_uid: A(a)lphabet, numbers, and hyphen-\n\
-                                    user_password: A(a)lphabet, numbers, and special chars, no spaces.\n";
-constexpr char signup_ok[] = "signed up and signed in.\nsend ~:q! to sign out.\n";
-constexpr char signin_ok[] = "signed in.\nsend ~:q! to sign out.\n\
-                              send ~-@uid: to tag another user.\n\
-                              send ~->uid: to send private messages to another user\n";
+constexpr char invalid_char_error[] = "invalid char, rules to follow:\n\
+user_uid: a-z, A-Z, numbers, and hyphen -\n\
+password: a-z, A-Z, numbers, and special chars, no spaces.\n\
+          must contains at least 3 out of 4 types above.\n";
+constexpr char signup_ok[] = "[SYSTEM_WELCOME] signed up and signed in.\n\
+[SYSTEM_WELCOME] send ~:q! to sign out.\n\
+[SYSTEM_WELCOME] send ~-@uid: to tag another user.\n\
+[SYSTEM_WELCOME] send ~->uid: to send private messages to another user.\n\n";
+constexpr char signin_ok[] = "[SYSTEM_WELCOME] signed in.\n\
+[SYSTEM_WELCOME] send ~:q! to sign out.\n\
+[SYSTEM_WELCOME] send ~-@uid: to tag another user.\n\
+[SYSTEM_WELCOME] send ~->uid: to send private messages to another user.\n\n";
 constexpr char signed_out[] = "[SYSTEM] you have signed out.\n";
-constexpr char user_already_signin[] = "user already signed in at: ";
-constexpr char user_resign_in[] = "would you like to sign out that connection and resign in here? (yes | no)\n";
+constexpr char user_already_signin[] = "user already signed in at client: ";
+constexpr char user_resign_in[] = "this signin would quit that client, are you sure? (yes | no)\n";
+constexpr char another_sign_warn[] = "[SYSTEM_WARN] another client is trying to sign in your uid!\n";
 constexpr char not_yes_or_no[] = "option error, please send either yes or no\n";
-constexpr char connection_reset[] = "this connection has been reset.\n";
+constexpr char option_denied[] = "you sent no. nothing changed.\n";
+constexpr char client_switched[] = "another client. signed out here.\n";
+constexpr char connection_reset[] = "this connection has been reset.\n\n";
 constexpr char cannot_at_or_to_user[] = "[SYSTEM] target user not signed in.\n";
 constexpr char cannot_at_or_to_self[] = "[SYSTEM] you cannot tag or send privated messages to yourself.\n";
 constexpr char been_tagged[] = "[SYSTEM] you've been tagged!";
+constexpr char private_msg_recved[] = "[SYSTEM] you've received a private message!";
 constexpr size_t MSG_ATTR_LEN = 3;
 constexpr char to_user[MSG_ATTR_LEN] = {'~', '-', '>'};
 constexpr char tag_user[MSG_ATTR_LEN] = {'~', '-', '@'};
@@ -59,6 +68,7 @@ constexpr char user_delim = ':';
 struct user_entry {
     std::string user_uid;   // Unique ID
     std::string pass_hash;  // Hashed password
+    bool is_user_signin;   
 };
 
 class ctx_user_bind_buffer {
@@ -81,7 +91,7 @@ public:
         ctx_idx_prev = 0;
         is_set = false;
     }
-    bool is_set_bufer(void) const {
+    bool is_set_buffer(void) const {
         return is_set;
     }
     std::string get_user_uid() {
@@ -145,6 +155,7 @@ public:
 // Please consider using a database if you'd like to go further.
 class user_database {
     std::unordered_map<std::string, user_entry> user_db;
+    std::string user_list_fmt;
 public:
     static std::string get_pass_hash(std::string password) {
         std::string ret;
@@ -171,6 +182,10 @@ public:
         return user_db.find(user_uid) != user_db.end();
     }
 
+    auto get_user_num() {
+        return user_db.size();
+    }
+
     // Only Alphabet, numbers, and hyphen are allowed.
     // Length: 4-64
     static int user_uid_check(const std::string& str) {
@@ -189,10 +204,31 @@ public:
         if(pass_str.size() < password_minlen || pass_str.size() > password_maxlen)
             return -1;
         std::string special = std::string(special_chars);
+        uint8_t contain_num = 0;
+        uint8_t contain_lower_char = 0;
+        uint8_t contain_special_char = 0;
+        uint8_t contain_upper_char = 0;
         for(auto c : pass_str) {
-            if(!std::isalnum(static_cast<unsigned char>(c)) && special.find(c) == std::string::npos)
-                return 1;
+            if(std::isdigit(static_cast<unsigned char>(c))) {
+                contain_num = 1;
+                continue;
+            }
+            if(std::islower(static_cast<unsigned char>(c))) {
+                contain_lower_char = 1;
+                continue;
+            }
+            if(std::isupper(static_cast<unsigned char>(c))) {
+                contain_upper_char = 1;
+                continue;
+            }
+            if(special.find(c) != std::string::npos) {
+                contain_special_char = 1;
+                continue;
+            }
+            return 1;
         }
+        if(contain_num + contain_special_char + contain_lower_char + contain_upper_char < 3)
+            return 1;
         return 0;
     }
 
@@ -207,8 +243,10 @@ public:
         if(new_user.pass_hash.empty())
             return false;
         user_db[user_uid] = new_user;
+        user_list_fmt += (user_uid + " ");
         return true;
     }
+
     bool is_user_pass_valid(std::string user_uid, std::string provided_password) {
         if(user_uid.empty() || provided_password.empty())
             return false;
@@ -221,6 +259,10 @@ public:
             (ptr_user->pass_hash).c_str(), 
             provided_password.c_str(), 
             provided_password.size()) == 0;
+    }
+
+    std::string get_user_list() {
+        return user_list_fmt;
     }
 };
 
@@ -304,10 +346,11 @@ public:
         return ret;
     }
 
-    int notify_reset_conn(const void *msg, size_t size_of_msg, conn_ctx& ctx) {
-        int ret = simple_send(msg, size_of_msg, *(ctx.get_conn_addr()));
+    bool notify_reset_conn(const void *msg, size_t size_of_msg, conn_ctx& ctx) {
+        auto ret1 = simple_send(msg, size_of_msg, *(ctx.get_conn_addr()));
+        auto ret2 = simple_send(connection_reset, sizeof(connection_reset), *(ctx.get_conn_addr()));
         ctx.reset_conn();
-        return ret;
+        return (ret1 > 0) && (ret2 > 0);
     }
 
     // Convert an addr to a message
@@ -336,7 +379,7 @@ public:
 
     // Broadcasting to all connected clients (include or exclude current/self).
     size_t system_broadcasting(bool include_self, std::string user_uid, std::string& msg_body) {
-        std::string msg = "[SYSTEM BROADCASTING]: [UID]";
+        std::string msg = "[SYSTEM_BROADCAST]: [UID]";
         msg += user_uid;
         msg += msg_body;
         size_t sent_out = 0;
@@ -423,6 +466,14 @@ public:
         buffer.push_back('\0');
     }
 
+    std::string user_list_to_msg() {
+        std::string user_list_fmt = all_users.get_user_list();
+        std::ostringstream oss;
+        oss << "[SYSTEM_INFO] currently there are " << all_users.get_user_num()
+            << " signed up users. List:\n" << user_list_fmt << "\n\n"; 
+        return oss.str();
+    }
+
     // Main processing method.
     int run_server(void) {
         if(server_fd == -1) {
@@ -464,25 +515,22 @@ public:
                 client.set_status(1);
                 continue;
             }
-
-
             if(stat == 100) { // Waiting for yes or no
                 if(buff_str != "yes" && buff_str != "no") {
-                    simple_send(not_yes_or_no, sizeof(not_yes_or_no), client_addr);
+                    notify_reset_conn(not_yes_or_no, sizeof(not_yes_or_no), client);
                     continue;
                 }
                 if(buff_str == "yes") {
-                    clients[bind_buffer.get_prev_ctx_idx()].reset_conn();
-                    client.set_bind_uid(bind_buffer.get_user_uid());
-                    bind_buffer.unset_bind_buffer();
                     simple_send(input_password, sizeof(input_password), client_addr);
+                    simple_send(another_sign_warn, sizeof(another_sign_warn), *(clients[bind_buffer.get_prev_ctx_idx()].get_conn_addr()));
+                    client.set_bind_uid(bind_buffer.get_user_uid());
                     client.set_status(5);
-                    continue;
                 }
-                notify_reset_conn(connection_reset, sizeof(connection_reset), client);
+                else {
+                    notify_reset_conn(option_denied, sizeof(option_denied), client);
+                }
                 continue;
             }
-            
             if(stat == 1) {
                 if(buff_str != "1" && buff_str != "2") {
                     notify_reset_conn(option_error, sizeof(option_error), client);
@@ -553,8 +601,10 @@ public:
                 std::string user_uid = client.get_bind_uid();
                 if(stat == 4) {
                     all_users.add_user(user_uid, buff_str);
+                    auto user_list_msg = user_list_to_msg();
                     simple_send(signup_ok, sizeof(signup_ok), client_addr);
-                    std::string msg_body = " signed up and in !\n";
+                    simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
+                    std::string msg_body = " signed up and in!\n";
                     system_broadcasting(false, user_uid, msg_body);
                     client.set_status(6);
                     continue;
@@ -563,9 +613,15 @@ public:
                     notify_reset_conn(password_error, sizeof(password_error), client);
                     continue;
                 }
+                auto user_list_msg = user_list_to_msg();
                 simple_send(signin_ok, sizeof(signin_ok), client_addr);
-                std::string msg_body = " signed in !\n";
+                simple_send(user_list_msg.c_str(), user_list_msg.size(), client_addr);
+                std::string msg_body = " signed in!\n";
                 system_broadcasting(false, user_uid, msg_body);
+                if(bind_buffer.is_set_buffer()) {
+                    notify_reset_conn(client_switched, sizeof(client_switched), clients[bind_buffer.get_prev_ctx_idx()]);
+                    bind_buffer.unset_bind_buffer();
+                }
                 client.set_status(6);
                 continue;
             }
@@ -573,7 +629,7 @@ public:
             std::string user_uid = client.get_bind_uid();
             if(buff_str == "~:q!") {
                 notify_reset_conn(signed_out, sizeof(signed_out), client);
-                std::string msg_body = " signed out !\n";
+                std::string msg_body = " signed out!\n";
                 system_broadcasting(false, user_uid, msg_body);
                 continue;
             }
@@ -605,6 +661,7 @@ public:
                 }
                 continue;
             }
+            simple_send(private_msg_recved, sizeof(private_msg_recved), *(clients[attr.target_ctx_idx].get_conn_addr()));
             simple_send(buffer.data(), buffer.size(), *(clients[attr.target_ctx_idx].get_conn_addr()));
         }
     }
