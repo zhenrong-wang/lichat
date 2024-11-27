@@ -4,15 +4,15 @@
 
 LiChat is a light-weight chat room service. It provides many features:
 
-- Super light. It is UDP-based, message-based, easy to deploy.
-- Pure service. It works with any UDP client from any platform.
+- Super-light. It is UDP and message based, very easy to deploy.
+- Pure-service. It works with any UDP client from any platform.
 - Privacy. It doesn't store any message at the backend/server side.
-- Freedom. It is free software, and support free speech, no censorship by default.
+- Freedom. It is free software, and support free speech, no censorship.
 - Functional:
   - manages multiple clients
   - allows multiple users
-  - process text messages
-  - support public chats, tagging users, and private messages.
+  - processes text messages
+  - supports public chats, tagging users, and private messages.
 
 That's it, as simple and light as possible.
 
