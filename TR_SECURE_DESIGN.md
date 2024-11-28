@@ -13,16 +13,57 @@ Client manages its **RSA key pair**. Server manages its **RSA key pair**. They a
 
 # 2. Communication Process
 
+Diagram as below, detailed description follows the diagram.
+
+```
+          Client                                  Server
+*HANDSHAKE* | 00 client_public_key \                |
+            |        OR             |-------------->| 
+            | 01 client_public_key /                |
+            |                                       |
+            |                / 00 server_public_key |
+            |<--------------|         OR            |
+            |                \ 01 OK                |
+            |     ___________________               |
+Server      |    | client_cid        |              | Server
+Public Key  |    | client_public_key |              | Private Key
+RSA-Encrypt | 02 +---RSA-Encrypted---+------------->| RSA-Decrypt
+            |                      _______________  |
+            |                     | client_cid    | |
+            |                     | server_sid    | | 
+Client      |                     | AES_key       | | Client
+Private Key |                     | AES_attr      | | Public Key
+RSA-Decrypt |<---------------- 02 +-RSA-Encrypted-+ | RSA Encrypt    
+            |             _______________           |
+            | 03         | server_sid OK |          |
+AES-Encrypt | client_cid-+-AES-Encrypted-+--------->| AES-Decrypt
+            |                      _______________  | 
+            |                     | server_sid    | |
+            |                     | client_cid OK | |
+AES-Decrypt |<---------------- 03 +-AES-Encrypted-+ | AES-Encrypt
+            |                                       |
+*MESSAGING* |             _____________________     |                        
+            | 0x10       | server_sid msg_body |    |
+AES-Encrypt | client_cid-+----AES-Encrypted----+--->| AES-Decrypt
+            |                      _______________  | 
+            |                     | server_sid    | |
+            |                     | client_cid    | |
+            |                     | msg_body      | |
+AES-Decrypt |<---------------0x10 +-AES-Encrypted-+ | AES-Encrypt
+            |                                       |
+            | ...                                   |
+``` 
+
 ## 2.1 Exchange RSA Public Keys
 
-- Client check whether the `server_public_key` is expired locally.
+- Client checks whether the `server_public_key` is expired locally.
   - If expired or doesn't exist, client sends a message with a 1-byte header `0x00` followed by its `client_public_key`.
-  - If exist, client sends a message with a 1-byte header `0x01`, followed by its `client_public_key`.
+  - If exists, client sends a message with a 1-byte header `0x01`, followed by its `client_public_key`.
 - Server parses the first byte, if it is `0x00` or `0x01`, parses the following `client_public_key`.
   - If the following bytes are not a well-formatted **RSA Public Key**, echo back and restart the handshake.
   - If format is good, server accepts and store it temperorily.
 - Server responds according to the header.
-  - If header is `0x00`, server sends back a message with header `0x00`, fowllowed by its `server_public_key`.
+  - If header is `0x00`, server sends back a message with header `0x00`, followed by its `server_public_key`.
   - If header is `0x01`, server sends back a message with header `0x01` `OK`
 - Client parses the header, if it is `0x00`, check the following bytes.
   - If the following bytes are not a well-formatted **RSA Public Key**, send `0xFF` `FAILED` `client_public_key` to the server. The server may do self-checks when receiving this type of messages.
