@@ -36,13 +36,38 @@ Now, with the exchanged `AES_key` and `AES_algo`, server and client can send/rec
 - Following the `0x10` is the **unencrypted** `client_cid`, and **AES encrypted** `server_sid` `hello!`. So the whole message would be:
   - (**unencrypted**)`0x10` (**unencrypted**) `client_cid` (**AES encrypted**)`server_sid` (**AES encrypted**)`hello!`
 - Server receives the message. It will follow the steps:
-  - Parses the header, it is `0x10`, so the message is not for handshaking.
+  - Parses the header, it is `0x10`, so the message is not for handshaking, it is an ordinary message.
   - Gets the fixed-length `client_cid`, retrieve the `AES_key` `AES_algo` and `server_sid` corresponding to the `client_cid`.
-  - Try to decrypt the message body, aka the **AES encrypted** `server_sid` `hello!`
-  - Get the `server_sid` first, and compare whether the `server_sid` in the message body == `server_sid` stored in the server.
+  - Try to decrypt the message body, aka the (**AES encrypted**)`server_sid` (**AES encrypted**)`hello!`
+  - Get the `server_sid` first, and compare whether received `server_sid` == stored `server_sid`.
     - If `server_sid` matches, the message is good to process. Server will assemble a message `yes!`, encrypt it with `AES_key`, and add a header `0x10`, send back to the client address.
     - If `server_sid` doesn't match, notify the client to do handshake again.
 
-# 3. Future Works
+
+# 3. Session Management
+
+With the design above, we can manage sessions effectively. 
+
+## 3.1 Activate a Session
+
+Any session must go through the handshake process. Once handshake done, the session would be tagged as `activated`, and OK for messaging.
+
+## 3.2 Securing a Session
+
+As described above, any ordinary messages on a session contain an **unencrypted** `client_cid` and an **AES encrypted** `server_sid`, an ordinary message is considered as **valid** only when `client_cid` and `server_sid` match. That design makes the message secure and impossible to construct.
+
+## 3.3 Disable a Session
+
+In this design, either server or client can disable a session:
+
+- Server side can invalidate the `server_sid` to disable a session and request a new handshake.
+- Client side can invalidate the `client_cid` to disable a session and initiate a new handshake. 
+- To enhance security, any new handshake **must** starts from exchanging **RSA Public Keys**.
+
+## 3.4 On an Activated Session
+
+On an activated session, the client can do everything securely, including `signin`, `signup`, `reset password`, `posting messages`, etc.
+
+# 4. Future Works
 
 First of all, this design needs to be reviewed. If it is good, I'll implement it in C++.
