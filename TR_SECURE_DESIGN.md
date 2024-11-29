@@ -77,7 +77,7 @@ AES-Decrypt |<---------------0x10 +-AES-Encrypted-+ | AES-Encrypt
 - Server receives `0x02` header, decrypts the remaining message with its `server_private_key`.
   - If decryption failed, server sends `0xEF` `RSAERR` to client. Client will remove any stored `server_public_key` and restart the handshake.
 - Server gets the `client_public_key` and the `client_cid`, bind them together as a pair, then generates a random `server_sid` and a random **128-bit AES-128 encryption/decryption Key** `AES_key`, determines the **AES attibutes** `AES_attr`, it also binds the `client_cid`, `server_sid`, `AES_key`, and `AES_attr` together as a **prepared session**.
-- Server assembles a message `client_cid` `server_sid` `AES_key` `AES_attr`, encrypts them with the `client_public_key`, adds a `0x02` header, and sends back.
+- Server assembles a message `server_sid` `client_cid` `AES_key` `AES_attr`, encrypts them with the `client_public_key`, adds a `0x02` header, and sends back.
 - Client receives `0x02` header, decrypts the remaining message with its `client_private_key`, gets the `client_cid`, `server_sid`.
   - If decryption failed, client sends `0xEF` `RSAERR` to the server, restart handshake.
   - (not quite possible) If the received `client_cid` and the local generated `client_cid` don't match, re-generates a random `client_cid` and retry the validation. If fails too many times (set by the server), the server will send a `0xEF` `!RETRY` to the client and the client will restart the handshake.
