@@ -18,6 +18,8 @@
 #include <ctime>
 #include <fstream>
 
+constexpr uint8_t const_cid_bytes = 8;
+constexpr uint8_t const_sid_bytes = 8;
 constexpr size_t uid_maxlen = 64;
 constexpr size_t uid_minlen = 4;
 constexpr size_t password_maxlen = 32;
@@ -210,49 +212,105 @@ public:
 };
 
 // We use AES256-GCM algorithm here
-class session {
-    uint32_t client_cid; // Main index
-    uint32_t server_sid;
+class session_item {
+    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> client_public_key;
+    std::array<uint8_t, const_cid_bytes> client_cid;
+    uint64_t cid_idx;
+    std::array<uint8_t, const_sid_bytes> server_sid;
     std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes256gcm_key;
     std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes256gcm_nonce;
-    int status; // 0 - disabled, 1 - prepared, others - activated
+    int status; // 0 - empty, 1 - public_key, 2 - prepared, 3 - activated, -1 - recycled
 public:
-    session() : status(0) {}
-    
+    session_item() : status(0) {}
+    session_item(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key) {
+        client_public_key = recved_client_public_key;
+        status = 1;
+    }
     std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> get_aes_gcm_key() const {
         return aes256gcm_key;
     }
     std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> get_aes_gcm_nonce() const {
         return aes256gcm_nonce;
     }
-    uint32_t get_server_sid() const {
+    std::array<uint8_t, const_sid_bytes> get_server_sid() const {
         return server_sid;
     }
-    uint32_t get_client_cid() const {
+    std::array<uint8_t, const_cid_bytes> get_client_cid() const {
         return client_cid;
     }
-    std::pair<uint32_t, uint32_t> get_session_id_pair(bool is_sid_first) const {
-        if(is_sid_first)
-            return std::pair<uint32_t, uint32_t>(server_sid, client_cid);
-        else
-            return std::pair<uint32_t, uint32_t>(client_cid, server_sid);
+    uint64_t get_client_cid_idx() const {
+        return cid_idx;
+    }
+    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> get_client_public_key() const {
+        return client_public_key;
     }
     bool is_session_disabled() const {
+        return status == -1;
+    }
+    bool is_session_empty() const {
         return status == 0;
     }
     int get_session_status() const {
         return status;
     }
-    void set_session_status(int s) {
-        status = s;
+    bool session_init(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key) {
+        if(status != 0 && status != -1)
+            return false;
+        client_public_key = recved_client_public_key;
+        status = 1;
+        return true;
     }
-
-    bool prepare_session(uint32_t client_cid) {
-
+    static uint64_t cid_to_idx(std::array<uint8_t, const_cid_bytes>& cid_array) {
+        uint64_t ret = 0;
+        for(uint8_t i = 0; i < const_cid_bytes; ++ i)
+            ret |= static_cast<uint64_t>(cid_array[i]) << (i * 8);
+        return ret;
     }
-
-    
+    bool session_prepare(std::array<uint8_t, const_cid_bytes>& recved_client_cid) {
+        if(status != 1)
+            return false;
+        client_cid = recved_client_cid;
+        cid_idx = cid_to_idx(recved_client_cid);
+        randombytes_buf(&server_sid, sizeof(server_sid));
+        randombytes_buf(aes256gcm_key.data(), aes256gcm_key.size());
+        randombytes_buf(aes256gcm_nonce.data(), aes256gcm_nonce.size());
+        status = 2;
+        return true;
+    }
+    bool session_activate() {
+        if(status != 2) 
+            return false;
+        status = 3;
+        return true;
+    }
+    bool session_reset() {
+        status = -1;
+    }
+    bool session_clear() {
+        std::memset(client_public_key.begin(), 0, client_public_key.size());
+        std::memset(client_cid.data(), 0, client_cid.size());
+        std::memset(server_sid.data(), 0, server_sid.size());
+        std::memset(aes256gcm_key.data(), 0, aes256gcm_key.size());
+        std::memset(aes256gcm_nonce.data(), 0, aes256gcm_nonce.size());
+        status = 0;
+    }
 };
+
+struct session_pool_stats {
+    size_t total = 0;
+    size_t recycled = 0;
+    size_t empty = 0;
+    size_t active = 0;
+};
+
+class session_pool {
+    std::unordered_map<uint64_t, session_item> sessions;
+    session_pool_stats stats;
+public:
+    session_pool() {}
+
+}
+
 
 // Connection Context contains an addr, a bind/empty uid, and a status
 class conn_ctx {
