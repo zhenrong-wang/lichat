@@ -126,27 +126,88 @@ struct msg_attr {
     }
 };
 
-class server_ed25519_key {
-    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> server_public_key;
-    std::array<uint8_t, crypto_sign_SECRETKEYBYTES> server_private_key;
+class ed25519_key_mgr {
+    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> public_key;
+    std::array<uint8_t, crypto_sign_SECRETKEYBYTES> private_key;
     bool is_empty;
 public:
-    server_ed25519_key() : is_empty(true) {}
+    ed25519_key_mgr() : is_empty(true) {}
     
-    static bool read_file_to_vector(const std::string& file_path, std::vector<uint8_t>& contents) {
+    static int read_ed25519_key_file(const std::string& file_path, std::vector<uint8_t>& content, const std::streamsize& expected_size) {
+        if(expected_size != crypto_sign_PUBLICKEYBYTES && expected_size != crypto_sign_SECRETKEYBYTES)
+            return -1; // function call error
         std::ifstream file(file_path, std::ios::in | std::ios::binary | std::ios::ate);
-
+        if(!file.is_open())
+            return 1; // file open error
+        std::streamsize size = file.tellg();
+        if(size != expected_size) {
+            file.close();
+            return 3; // file size error
+        }
+        file.seekg(0, std::ios::beg);
+        content.resize(size);
+        if(!file.read(reinterpret_cast<char *>(content.data()), size)) {
+            file.close();
+            return 5; // file read error
+        }
+        file.close();
+        return 0; // This doesn't mean the keys are valid
     }
 
-    static bool check_local_key_files(std::string pub_key_file, std::string priv_key_file) {
-
+    // This is a force operation, no status check
+    int load_local_key_files(std::string& pub_key_file, std::string& priv_key_file) {
+        std::vector<uint8_t> public_key_vec, private_key_vec;
+        auto ret = read_ed25519_key_file(pub_key_file, public_key_vec, crypto_sign_PUBLICKEYBYTES);
+        if(ret != 0)
+            return ret; // 1, 3, 5
+        ret = read_ed25519_key_file(priv_key_file, private_key_vec, crypto_sign_SECRETKEYBYTES);
+        if(ret != 0)
+            return -ret; // -1, -3, -5
+        uint8_t public_key_derived[crypto_sign_PUBLICKEYBYTES];
+        crypto_sign_ed25519_sk_to_pk(public_key_derived, private_key_vec.data());
+        if(std::memcmp(public_key_derived, public_key_vec.data(), crypto_sign_PUBLICKEYBYTES) == 0) {
+            std::copy(public_key_vec.begin(), public_key_vec.end(), public_key);
+            std::copy(private_key_vec.begin(), private_key_vec.end(), private_key);
+            is_empty = false;
+            return 0;
+        }
+        return 7; // key doesn't match
     }
 
-    static int generate_key() {
-        crypto_sign_keypair(public_key, private_key);
+    // This is a force operation, no status check.
+    int gen_key_save_to_local(std::string& pubkey_file_path, std::string& privkey_file_path) {
+        std::ofstream out_pubkey(pubkey_file_path, std::ios::binary);
+        if(!out_pubkey.is_open())
+            return 1;
+        std::ofstream out_privkey(privkey_file_path, std::ios::binary);
+        if(!out_privkey.is_open()) {
+            out_pubkey.close();
+            return -1;
+        }
+        uint8_t gen_public_key[crypto_sign_PUBLICKEYBYTES];
+        uint8_t gen_private_key[crypto_sign_SECRETKEYBYTES];
+        crypto_sign_keypair(gen_public_key, gen_private_key);
+        std::copy(std::begin(gen_public_key), std::end(gen_public_key), public_key);
+        std::copy(std::begin(gen_private_key), std::end(gen_private_key), private_key);
+        is_empty = false;
+        out_pubkey.write(reinterpret_cast<const char *>(public_key.data()), public_key.size());
+        out_privkey.write(reinterpret_cast<const char *>(private_key.data()), private_key.size());
+        out_pubkey.close();
+        out_privkey.close();
+        return 0;
     }
 
-}
+    int key_mgr_init(std::string& pubkey_file_path, std::string& privkey_file_path) {
+        if(!is_empty) 
+            return 1; // If already init.
+        auto ret = load_local_key_files(pubkey_file_path, privkey_file_path);
+        if(ret != 0) {
+            if(gen_key_save_to_local(pubkey_file_path, privkey_file_path) != 0)
+                return -1;
+        }
+        return 0;
+    }
+};
 
 // We use AES256-GCM algorithm here
 class session {
