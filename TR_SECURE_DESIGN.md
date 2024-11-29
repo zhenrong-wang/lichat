@@ -111,7 +111,7 @@ Now, with the exchanged and validated `AES_key` and `AES_attr`, server and clien
 
 ## 2.5 Force Confirmation
 
-Ordinary messages from the server to client on a session doesn't require a confirmation. To enable a session checking, we define a special header `0x1F` for activated sessions. Server may send a backend **encrypted message** `?` with a header `0x1F` to client, and the client **must** send back a **encrypted** message `!`  with a header `0x1F` immediately to keep alive. Otherwise the server may disable the session actively. 
+Ordinary messages from the server to client on a session don't require a confirmation. To enable a session checking, we define a special header `0x1F` for activated sessions. Server may send a backend **encrypted message** `?` with a header `0x1F` to client, and the client **must** send back a **encrypted** message `!`  with a header `0x1F` immediately to keep alive. Otherwise the server may disable the session actively. 
 
 # 3. Session Management
 
