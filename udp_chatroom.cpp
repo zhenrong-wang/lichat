@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <ctime>
+#include <fstream>
 
 constexpr size_t uid_maxlen = 64;
 constexpr size_t uid_minlen = 4;
@@ -123,6 +124,73 @@ struct msg_attr {
         target_ctx_idx = -1;
         is_set = false;
     }
+};
+
+class server_ed25519_key {
+    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> server_public_key;
+    std::array<uint8_t, crypto_sign_SECRETKEYBYTES> server_private_key;
+    bool is_empty;
+public:
+    server_ed25519_key() : is_empty(true) {}
+    
+    static bool read_file_to_vector(const std::string& file_path, std::vector<uint8_t>& contents) {
+        std::ifstream file(file_path, std::ios::in | std::ios::binary | std::ios::ate);
+
+    }
+
+    static bool check_local_key_files(std::string pub_key_file, std::string priv_key_file) {
+
+    }
+
+    static int generate_key() {
+        crypto_sign_keypair(public_key, private_key);
+    }
+
+}
+
+// We use AES256-GCM algorithm here
+class session {
+    uint32_t client_cid; // Main index
+    uint32_t server_sid;
+    std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes256gcm_key;
+    std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes256gcm_nonce;
+    int status; // 0 - disabled, 1 - prepared, others - activated
+public:
+    session() : status(0) {}
+    
+    std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> get_aes_gcm_key() const {
+        return aes256gcm_key;
+    }
+    std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> get_aes_gcm_nonce() const {
+        return aes256gcm_nonce;
+    }
+    uint32_t get_server_sid() const {
+        return server_sid;
+    }
+    uint32_t get_client_cid() const {
+        return client_cid;
+    }
+    std::pair<uint32_t, uint32_t> get_session_id_pair(bool is_sid_first) const {
+        if(is_sid_first)
+            return std::pair<uint32_t, uint32_t>(server_sid, client_cid);
+        else
+            return std::pair<uint32_t, uint32_t>(client_cid, server_sid);
+    }
+    bool is_session_disabled() const {
+        return status == 0;
+    }
+    int get_session_status() const {
+        return status;
+    }
+    void set_session_status(int s) {
+        status = s;
+    }
+
+    bool prepare_session(uint32_t client_cid) {
+
+    }
+
+    
 };
 
 // Connection Context contains an addr, a bind/empty uid, and a status
