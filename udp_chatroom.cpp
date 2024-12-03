@@ -20,6 +20,7 @@
 
 constexpr uint8_t const_cid_bytes = 8;
 constexpr uint8_t const_sid_bytes = 8;
+constexpr uint8_t session_pool_key_bytes = 8;
 constexpr size_t uid_maxlen = 64;
 constexpr size_t uid_minlen = 4;
 constexpr size_t password_maxlen = 32;
@@ -128,15 +129,15 @@ struct msg_attr {
     }
 };
 
-class ed25519_key_mgr {
-    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> public_key;
-    std::array<uint8_t, crypto_sign_SECRETKEYBYTES> private_key;
+class curve25519_key_mgr {
+    std::array<uint8_t, crypto_box_PUBLICKEYBYTES> public_key;
+    std::array<uint8_t, crypto_box_SECRETKEYBYTES> private_key;
     bool is_empty;
 public:
-    ed25519_key_mgr() : is_empty(true) {}
+    curve25519_key_mgr() : is_empty(true) {}
     
-    static int read_ed25519_key_file(const std::string& file_path, std::vector<uint8_t>& content, const std::streamsize& expected_size) {
-        if(expected_size != crypto_sign_PUBLICKEYBYTES && expected_size != crypto_sign_SECRETKEYBYTES)
+    static int read_curve25519_key_file(const std::string& file_path, std::vector<uint8_t>& content, const std::streamsize& expected_size) {
+        if(expected_size != crypto_box_PUBLICKEYBYTES && expected_size != crypto_box_SECRETKEYBYTES)
             return -1; // function call error
         std::ifstream file(file_path, std::ios::in | std::ios::binary | std::ios::ate);
         if(!file.is_open())
@@ -153,21 +154,26 @@ public:
             return 5; // file read error
         }
         file.close();
-        return 0; // This doesn't mean the keys are valid
+        return 0; // This doesn't mean the keys are valid, only format is correct.
     }
 
     // This is a force operation, no status check
     int load_local_key_files(std::string& pub_key_file, std::string& priv_key_file) {
         std::vector<uint8_t> public_key_vec, private_key_vec;
-        auto ret = read_ed25519_key_file(pub_key_file, public_key_vec, crypto_sign_PUBLICKEYBYTES);
+        auto ret = read_curve25519_key_file(pub_key_file, public_key_vec, crypto_box_PUBLICKEYBYTES);
         if(ret != 0)
             return ret; // 1, 3, 5
-        ret = read_ed25519_key_file(priv_key_file, private_key_vec, crypto_sign_SECRETKEYBYTES);
+        ret = read_curve25519_key_file(priv_key_file, private_key_vec, crypto_box_SECRETKEYBYTES);
         if(ret != 0)
             return -ret; // -1, -3, -5
-        uint8_t public_key_derived[crypto_sign_PUBLICKEYBYTES];
-        crypto_sign_ed25519_sk_to_pk(public_key_derived, private_key_vec.data());
-        if(std::memcmp(public_key_derived, public_key_vec.data(), crypto_sign_PUBLICKEYBYTES) == 0) {
+        uint8_t random_msg[32];
+        uint8_t enc_msg[crypto_box_SEALBYTES + sizeof(random_msg)];
+        uint8_t dec_msg[sizeof(random_msg)];
+        randombytes_buf(random_msg, sizeof(random_msg));
+        crypto_box_seal(enc_msg, random_msg, sizeof(random_msg), public_key_vec.data());
+        if(crypto_box_seal_open(dec_msg, enc_msg, sizeof(enc_msg), public_key_vec.data(), private_key_vec.data()) != 0)
+            return 7;
+        if(std::memcmp(random_msg, dec_msg, sizeof(random_msg)) == 0) {
             std::copy(public_key_vec.begin(), public_key_vec.end(), public_key);
             std::copy(private_key_vec.begin(), private_key_vec.end(), private_key);
             is_empty = false;
@@ -186,9 +192,9 @@ public:
             out_pubkey.close();
             return -1;
         }
-        uint8_t gen_public_key[crypto_sign_PUBLICKEYBYTES];
-        uint8_t gen_private_key[crypto_sign_SECRETKEYBYTES];
-        crypto_sign_keypair(gen_public_key, gen_private_key);
+        uint8_t gen_public_key[crypto_box_PUBLICKEYBYTES];
+        uint8_t gen_private_key[crypto_box_SECRETKEYBYTES];
+        crypto_box_keypair(gen_public_key, gen_private_key);
         std::copy(std::begin(gen_public_key), std::end(gen_public_key), public_key);
         std::copy(std::begin(gen_private_key), std::end(gen_private_key), private_key);
         is_empty = false;
@@ -213,65 +219,59 @@ public:
 
 // We use AES256-GCM algorithm here
 class session_item {
+    // Received
     std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> client_public_key;
     std::array<uint8_t, const_cid_bytes> client_cid;
+
+    // Generated
     std::array<uint8_t, const_sid_bytes> server_sid;
-    uint64_t session_map_idx;
     std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes256gcm_key;
     std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes256gcm_nonce;
-    int status; // 0 - empty, 1 - public_key, 2 - prepared, 3 - activated, -1 - recycled
+
+    // 0 - empty, 1 - public_key, 2 - prepared, 3 - activated, -1 - recycled
+    int status; 
 public:
-    session_item() : status(0) {}
-    session_item(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key) {
+    session_item() : status(0) {} // Not recommended! For future session factory use.
+    session_item(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key, std::array<uint8_t, const_cid_bytes> recved_client_cid) : status(1) {
         client_public_key = recved_client_public_key;
-        status = 1;
+        client_cid = recved_client_cid;
     }
-    std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> get_aes_gcm_key() const {
+    const std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES>& get_aes_gcm_key() const {
         return aes256gcm_key;
     }
-    std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> get_aes_gcm_nonce() const {
+    const std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES>& get_aes_gcm_nonce() const {
         return aes256gcm_nonce;
     }
-    std::array<uint8_t, const_sid_bytes> get_server_sid() const {
+    const std::array<uint8_t, const_sid_bytes>& get_server_sid() const {
         return server_sid;
     }
-    std::array<uint8_t, const_cid_bytes> get_client_cid() const {
+    const std::array<uint8_t, const_cid_bytes>& get_client_cid() const {
         return client_cid;
     }
-    uint64_t get_map_idx() const {
-        return session_map_idx;
-    }
-    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> get_client_public_key() const {
+    const std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& get_client_public_key() const {
         return client_public_key;
     }
-    bool is_session_disabled() const {
+    const int& get_session_status() const {
+        return status;
+    }
+    bool is_session_recycled() const {
         return status == -1;
     }
     bool is_session_empty() const {
         return status == 0;
     }
-    int get_session_status() const {
-        return status;
-    }
-    bool session_init(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key) {
+    bool session_init(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key, std::array<uint8_t, const_cid_bytes> recved_client_cid) {
         if(status != 0 && status != -1)
             return false;
         client_public_key = recved_client_public_key;
+        client_cid = recved_client_cid;
         status = 1;
         return true;
     }
-    static uint64_t sid_to_idx(std::array<uint8_t, const_sid_bytes>& sid_array) {
-        uint64_t ret = 0;
-        for(uint8_t i = 0; i < const_sid_bytes; ++ i)
-            ret |= static_cast<uint64_t>(sid_array[i]) << (i * 8);
-        return ret;
-    }
-    bool session_prepare(std::array<uint8_t, const_cid_bytes>& recved_client_cid) {
+    bool session_prepare() {
         if(status != 1)
             return false;
-        client_cid = recved_client_cid;
-        randombytes_buf(&server_sid, sizeof(server_sid));
-        session_map_idx = sid_to_idx(server_sid);
+        randombytes_buf(server_sid.data(), server_sid.size());
         randombytes_buf(aes256gcm_key.data(), aes256gcm_key.size());
         randombytes_buf(aes256gcm_nonce.data(), aes256gcm_nonce.size());
         status = 2;
@@ -290,10 +290,17 @@ public:
         std::memset(client_public_key.data(), 0, client_public_key.size());
         std::memset(client_cid.data(), 0, client_cid.size());
         std::memset(server_sid.data(), 0, server_sid.size());
-        session_map_idx = 0;
         std::memset(aes256gcm_key.data(), 0, aes256gcm_key.size());
         std::memset(aes256gcm_nonce.data(), 0, aes256gcm_nonce.size());
         status = 0;
+    }
+    const std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES>& new_aes_gcm_nonce() {
+        randombytes_buf(aes256gcm_nonce.data(), aes256gcm_nonce.size());
+        return get_aes_gcm_nonce();
+    }
+    void regen_aes_gcm_key_nonce() {
+        randombytes_buf(aes256gcm_key.data(), aes256gcm_key.size());
+        randombytes_buf(aes256gcm_nonce.data(), aes256gcm_nonce.size());
     }
 };
 
@@ -307,13 +314,46 @@ struct session_pool_stats {
 class session_pool {
     std::unordered_map<uint64_t, session_item> sessions;
     session_pool_stats stats;
+
+    uint64_t gen_64bit_key(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key, std::array<uint8_t, const_cid_bytes> recved_client_cid) {
+        std::array<uint8_t, crypto_sign_PUBLICKEYBYTES + const_cid_bytes> combined;
+        std::array<uint8_t, 8> hash_key;
+        std::copy(recved_client_public_key.begin(), recved_client_public_key.end(), combined.begin());
+        std::copy(recved_client_cid.begin(), recved_client_cid.end(), combined.begin() + recved_client_public_key.size());
+        crypto_generichash(hash_key.data(), hash_key.size(), combined.data(), combined.size(), NULL, 0);
+        uint64_t ret = 0;
+        for(uint8_t i = 0; i < 8; ++ i)
+            ret |= (static_cast<uint64_t>(hash_key[i]) << (i * 8));
+        return ret;
+    }
+    uint64_t gen_64bit_key() {
+        std::array<uint8_t, 8> hash_key;
+        randombytes_buf(hash_key.data(), hash_key.size());
+        uint64_t ret = 0;
+        for(uint8_t i = 0; i < 8; ++ i)
+            ret |= (static_cast<uint64_t>(hash_key[i]) << (i * 8));
+        return ret;
+    }
+
 public:
     public:
     session_pool() : stats({0, 0, 0, 0}) {};
-    session_pool(size_t init_items) {
-
-        stats = {init_items, 0, init_items, 0};
-        
+    bool add_empty_item() {
+        uint64_t key = gen_64bit_key();
+        if(sessions.find(key) != sessions.end())
+            return false;
+        sessions.emplace(key, session_item());
+        ++ stats.total;
+        ++ stats.empty;
+        return true;
+    }
+    bool add_item(std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_client_public_key, std::array<uint8_t, const_cid_bytes> recved_client_cid) {
+        uint64_t key = gen_64bit_key(recved_client_public_key, recved_client_cid);
+        if(sessions.find(key) != sessions.end())
+            return false;
+        sessions.emplace(key, session_item(recved_client_public_key, recved_client_cid));
+        ++ stats.total;
+        return true;
     }
     
 };
