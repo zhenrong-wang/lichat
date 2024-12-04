@@ -61,21 +61,22 @@ AES-Decrypt |<---------------0x10 +---Encrypted---+ | AES-Encrypt
 - Server responds according to the header.
   - If header is `0x00`, server sends back a message with header `0x00` `server_public_key` `AES_nonce`, followed by encrypted `cinfo_hash` `server_sid` `OK`.
   - If header is `0x01`, server sends back a message with header `0x01` `AES_nonce`, followed by encrypted `cinfo_hash` `server_sid` `OK`
-- Client parses the header, use received or pre-stored `server_public_key` to calculate and store `AES-key`, decrypt the following bytes with the received `AES_nonce`.
-  - If the last 2 bytes are not ASCII `OK`, or the decrypted lengths are invalid, sends a `0xFF` `FAILED` `client_cid` `client_public_key`
+- Client parses the header, use received or pre-stored `server_public_key` to calculate and store `AES_key`.
 - (Optional) Client generates the fingerprint (**SHA-256**) of the received/stored `server_public_key`, requires user to manually check the public fingerprint(s) and confirm.
   - If the confirmation timeout, client sends `0xFF` `TIMOUT` `client_cid` `client_public_key` to server, restart the handshake.
-- Client stores the `server_public_key` locally.
 
 ## 2.2 Validate the AES Encryption
-
+- Client tries to decrypt the following bytes with the received `AES_nonce` and calculated `AES_key`.
+  - If decryption failed, client sends `0xEF` `KEYERR` `client_cid` `client_public_key` to server, restart the handshake.
+  - If the last 2 bytes are not ASCII `OK`, or the decrypted lengths are invalid, sends a `0xDF` `MSGERR` `client_cid` `client_public_key`, restart the handshake.
+- Client stores the `server_public_key` locally.
 - Client assembles a message `server_sid` `OK` , encrypts it with the calculated `AES_key`, adds a header `0x02` `cinfo_hash` `AES_nonce`, and sends to server.
 - Server receives the `0x02` header message and gets the `cinfo_hash` `AES_nonce`, then retrives the stored `server_sid`, `AES_key` by the received `cinfo_hash`. 
 - Server tries to decrypt the remaining message.
   - If decryption failed, server sends `0xEF` `KEYERR` `client_cinfo` `client_id` `server_public_key` and restart the handshake. Client can use the new `server_public_key` for next handshake.
 - Server compares the received `server_sid` and stored `server_sid`.
   - If they match, handshake done, activate the session, server assembles an encrypted `server_sid` `cinfo_hash` `OK` message with a header `0x03`, sends to the client.
-  - Otherwise send `0xEF` `KEYERR` `client_cinfo` `client_id` `server_public_key` to client and restart handshake. Client can use the new `server_public_key` for next handshake.
+  - Otherwise send `0xDF` `MSGERR` `client_cinfo` `client_id` `server_public_key` to client and restart handshake. Client can use the new `server_public_key` for next handshake.
 
 ## 2.4 Communication / Messaging
 
@@ -90,7 +91,7 @@ Now, with the validated handshake, server and client can send/recv messages secu
   - Try to decrypt the message body, aka the (**AES encrypted**)`server_sid` (**AES encrypted**)`hello!`
   - Get the `server_sid` first, and compare whether received `server_sid` == stored `server_sid`.
     - If `server_sid`s matche, the message is good to process. Server will assemble a message `server_sid` `cinfo_hash` `yes!`, encrypt it with `AES_key`, and add a header `0x10` `AES_nonce`, send back to the client address.
-    - If `server_sid`s don't match, send `0xDF` `SIDERR` to client, and the client will restart the handshake. 
+    - If `server_sid`s don't match, send `0xCF` `SIDERR` to client, and the client will restart the handshake. 
 - Client receives the message `0x10 AES_nonce`, tries to decrypt the message with the local stored `AES_key` `AES_attr`, and gets the `yes!` message body.
 
 ## 2.5 Force Confirmation
