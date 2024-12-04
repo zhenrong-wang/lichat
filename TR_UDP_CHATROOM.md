@@ -4,8 +4,6 @@
 
 A chatroom is a web service that allows multiple users to join and post messages to others. In this practice, we will build a chatroom based on the stateless protocol UDP. The language is C++ with support from libsodium (for hashing) and socket (for UDP communication).
 
-Repo: `https://github.com/zhenrong-wang/random-codes/` -> Code: `udp_chatroom.cpp` 
-
 ## 2. Architecture
 
 ```
