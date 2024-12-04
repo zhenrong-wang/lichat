@@ -652,6 +652,9 @@ public:
     bool is_ordinary_msg() const {
         return buffer[0] == 0x10;
     }
+    bool is_error_msg() const {
+        return (buffer[0] == 0xFF) | buffer[0] == 0xEF
+    }
 };
 
 // The main class.
