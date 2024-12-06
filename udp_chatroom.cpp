@@ -908,7 +908,7 @@ public:
         ctx_user_bind_buffer bind_buffer;
         while(true) {
             struct sockaddr_in client_addr;
-            auto addr_len = 
+            auto addr_len = sizeof(client_addr);
             buffer.clear_buffer();
             auto bytes_recv = recvfrom(server_fd, buffer.recv_raw_buffer.data(), buffer.recv_raw_buffer.size(), MSG_WAITALL, (struct sockaddr *)&client_addr, (socklen_t *)&addr_len);
             auto bytes_recv = recvfrom(server_fd, buffer.data(), buffer.size(), \
