@@ -1342,7 +1342,8 @@ public:
                             simple_secure_send(0x10, aes_key, client_addr, server_sid, cinfo_hash_bytes, nullptr, 0, &err, 1);
                             continue;
                         }
-                        system_secure_broadcasting(false, cinfo_hash, )
+                        const char msg[] = " signed up and signed in!\n";
+                        system_secure_broadcasting(false, reg_info[1], 0x10, msg, sizeof(msg));
 
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
