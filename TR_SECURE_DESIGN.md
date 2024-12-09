@@ -24,11 +24,11 @@ Diagram as below, detailed description follows the diagram.
             |    client_public_key /                | Calculate AES Key
             |                                       |
             |       / 00 server_public_key          | 
-            |      |     Encrypted: cinfo_hash      | 
-Calculate   |      |                server_sid OK   | AES nonce
+            |      |     Encrypted: server_sid      | 
+Calculate   |      |                cinfo_hash OK   | AES nonce
 AES Key     |<-----|            OR                  | AES-Encrypt
-AES-Decrypt |      |  01 Encrypted: cinfo_hash      | 
-            |       \               server_sid OK   | 
+AES-Decrypt |      |  01 Encrypted: server_sid      | 
+            |       \               cinfo_hash OK   | 
             |             _______________           |
 AES nonce   | 02         | server_sid OK |          | AES-Decrypt
 AES-Encrypt | cinfo_hash-+---Encrypted---+--------->| Activate session
@@ -59,8 +59,8 @@ AES-Decrypt |<---------------0x10 +---Encrypted---+ | AES-Encrypt
   - If the following bytes are not a well-formatted **Public Key**, sends `0xFF` `FAILED` to the client and the client restart handshake.
 - Server generates a 64bit `cinfo_hash` of the combined [`client_cid` `client_public_key`], calculate the `AES_key` with `server_private_key`, and generates a `server_sid`. Then, server encrypts the `cinfo_hash` `server_sid` with the `AES_key`.
 - Server responds according to the header.
-  - If header is `0x00`, server sends back a message with header `0x00` `server_public_key` `AES_nonce`, followed by encrypted `cinfo_hash` `server_sid` `OK`.
-  - If header is `0x01`, server sends back a message with header `0x01` `AES_nonce`, followed by encrypted `cinfo_hash` `server_sid` `OK`
+  - If header is `0x00`, server sends back a message with header `0x00` `server_public_key` `AES_nonce`, followed by encrypted `server_sid` `cinfo_hash` `OK`.
+  - If header is `0x01`, server sends back a message with header `0x01` `AES_nonce`, followed by encrypted `server_sid` `cinfo_hash` `OK`
 - Client parses the header, use received or pre-stored `server_public_key` to calculate and store `AES_key`.
 - (Optional) Client generates the fingerprint (**SHA-256**) of the received/stored `server_public_key`, requires user to manually check the public fingerprint(s) and confirm.
   - If the confirmation timeout, client sends `0xFF` `TIMOUT` `client_cid` `client_public_key` to server, restart the handshake.
@@ -75,7 +75,7 @@ AES-Decrypt |<---------------0x10 +---Encrypted---+ | AES-Encrypt
 - Server tries to decrypt the remaining message.
   - If decryption failed, server sends `0xEF` `KEYERR` `client_cinfo` `client_id` `server_public_key` and restart the handshake. Client can use the new `server_public_key` for next handshake.
 - Server compares the received `server_sid` and stored `server_sid`.
-  - If they match, handshake done, activate the session, server assembles an encrypted `server_sid` `cinfo_hash` `OK` message with a header `0x03`, sends to the client.
+  - If they match, handshake done, activate the session, server assembles an encrypted `server_sid` `cinfo_hash` `OK` message with a header `0x02`, sends to the client.
   - Otherwise send `0xDF` `MSGERR` `client_cinfo` `client_id` `server_public_key` to client and restart handshake. Client can use the new `server_public_key` for next handshake.
 
 ## 2.4 Communication / Messaging
