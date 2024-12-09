@@ -1344,7 +1344,6 @@ public:
                         }
                         const char msg[] = " signed up and signed in!\n";
                         system_secure_broadcasting(false, reg_info[1], 0x10, msg, sizeof(msg));
-
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
                         users.set_user_status(0, reg_info[0], 1);
