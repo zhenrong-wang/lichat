@@ -998,11 +998,13 @@ public:
     size_t system_secure_broadcasting(bool include_self, std::string unique_name, uint8_t header, const void *raw_msg, size_t raw_n) {
         std::string msg = "[SYSTEM_BROADCAST]: [UID]";
         msg += unique_name;
+        std::string msg_str(static_cast<const char *>(raw_msg), raw_n);
+        msg += msg_str;
         size_t sent_out = 0;
         for(auto elem : clients.get_ctx_map()) {
             if(elem.second.get_status() != 6)
                 continue;
-            if(elem.second.get_bind_uid() == ptr_ctx->get_bind_uid() && !include_self)
+            if(elem.second.get_bind_uid() == unique_name && !include_self)
                 continue;
             auto cif = elem.first;
             session_item *ptr_session = conns.get_session(cif);
