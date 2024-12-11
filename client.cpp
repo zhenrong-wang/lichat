@@ -224,6 +224,18 @@ public:
         key_paths = std::make_pair(default_client_pk, default_client_sk);
     }
 
+    bool set_server_addr(std::string& addr_str, std::string& port_str) {
+        std::array<char, INET_ADDRSTRLEN> ipv4_addr;
+        uint16_t port_num;
+        if(!get_addr_info(addr_str, ipv4_addr) || !string_to_u16(port_str, port_num)) 
+            return false;
+        server_port = port_num;
+        server_addr.sin_addr.s_addr = inet_addr(ipv4_addr.data());
+        server_addr.sin_port = htons(port_num);
+        session.update_src_addr(server_addr);
+        return true;
+    }
+
     // Close server and possible FD
     bool close_client(int err) {
         last_error = err;
@@ -421,7 +433,7 @@ public:
                         auto ret = session.prepare(server_pk_mgr, client_key, server_sid, cinfo_hash_bytes);
                         if(ret == 0) {
                             simple_secure_send(0x02, session, ok, sizeof(ok));
-                            std::cout << "Session prepared OK!\t" << session.get_status() << std::endl;
+                            std::cout << "Secure session prepared OK!\t" << session.get_status() << std::endl;
                             continue;
                         }
                         else if(ret < 0) 
@@ -489,19 +501,33 @@ public:
                     continue; // Not expected message ok.
                 session.update_src_addr(msg_addr);
                 session.activate(); // status already is confirmed as 2, so activate would always be true.
-                std::cout << "Session activated OK!\t" << session.get_status() << std::endl;
+                std::cout << "Secure session activated OK!\t" << session.get_status() << std::endl;
                 continue; 
             }
+            // Now the status == 3.
         }
     }
 };
 
-int main() {
+int main(int argc, char **argv) {
     lichat_client new_client;
     if(sodium_init() < 0) {
         std::cout << "Failed to init libsodium." << std::endl;
         return 1;
     }
+    if(argc >= 3) {
+        std::string addr_str(argv[1]);
+        std::string port_str(argv[2]);
+        if(!new_client.set_server_addr(addr_str, port_str)) {
+            std::cout << "Warning: Failed to connect to server " << addr_str << ":" << port_str << std::endl;
+            std::cout << "Will use the default server localhost:8081." << std::endl;
+        }
+        else
+            std::cout << "Will connect to the provided server " << addr_str << ":" << port_str << std::endl;
+    }
+    else
+        std::cout << "Will use the default server localhost:8081." << std::endl;
+    
     if(!new_client.start_client()) {
         std::cout << "Failed to start client. Error Code: " 
                   << new_client.get_last_error() << std::endl;
@@ -509,4 +535,3 @@ int main() {
     }
     return new_client.run_client();
 }
-
