@@ -73,10 +73,10 @@ AES-Decrypt |<---------------0x10 +---Encrypted---+ | AES-Encrypt
 - Client assembles a message `server_sid` `OK` , encrypts it with the calculated `AES_key`, adds a header `0x02` `cinfo_hash` `AES_nonce`, and sends to server.
 - Server receives the `0x02` header message and gets the `cinfo_hash` `AES_nonce`, then retrives the stored `server_sid`, `AES_key` by the received `cinfo_hash`. 
 - Server tries to decrypt the remaining message.
-  - If decryption failed, server sends `0xEF` `KEYERR` `client_cinfo` `client_id` `server_public_key` and restart the handshake. Client can use the new `server_public_key` for next handshake.
+  - If decryption failed, server sends `0xEF` `KEYERR` `client_cinfo` `server_public_key` and restart the handshake. Client can use the new `server_public_key` for next handshake.
 - Server compares the received `server_sid` and stored `server_sid`.
   - If they match, handshake done, activate the session, server assembles an encrypted `server_sid` `cinfo_hash` `OK` message with a header `0x02`, sends to the client.
-  - Otherwise send `0xDF` `MSGERR` `client_cinfo` `client_id` `server_public_key` to client and restart handshake. Client can use the new `server_public_key` for next handshake.
+  - Otherwise send `0xDF` `MSGERR` `client_cinfo` `server_public_key` to client and restart handshake. Client can use the new `server_public_key` for next handshake.
 
 ## 2.4 Communication / Messaging
 
