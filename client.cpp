@@ -1,7 +1,7 @@
+#include "lc_common.hpp"
 #include "lc_keymgr.hpp"
 #include "lc_consts.hpp"
 #include "lc_bufmgr.hpp"
-#include "lc_sesmgr.hpp"
 
 #include <iostream>
 #include <sys/socket.h>
@@ -115,10 +115,10 @@ public:
             return -1;  // Not quite possible
         if(!server_pk_mgr.is_ready() || !client_key.is_activated()) 
             return -3;  // key_mgr not activated
-        uint64_t cif_calc = session_item::hash_client_info(client_cid, client_key.get_public_key());
+        uint64_t cif_calc = lc_utils::hash_client_info(client_cid, client_key.get_public_key());
 
-        uint64_t cif_calc2 = session_item::hash_client_info(client_cid, client_key.get_public_key());
-        uint64_t cif_recv = session_item::bytes_to_u64(cif);
+        uint64_t cif_calc2 = lc_utils::hash_client_info(client_cid, client_key.get_public_key());
+        uint64_t cif_recv = lc_utils::bytes_to_u64(cif);
         if(cif_calc != cif_recv) 
             return 1;  //  Need to report to server, msg error
         if(crypto_box_beforenm(aes256gcm_key.data(), server_pk_mgr.get_server_pk().data(), client_key.get_secret_key().data()) != 0)
@@ -262,6 +262,10 @@ public:
         return true;
     }
 
+    void print_menu(void) {
+        std::cout << main_menu << std::endl;
+    }
+
     int simple_send(const client_session& curr_s, const uint8_t *buf, size_t n) {
         auto addr = curr_s.get_src_addr();
         return sendto(client_fd, buf, n, 0, (const struct sockaddr*)(&addr), sizeof(addr));
@@ -281,7 +285,7 @@ public:
 
         auto aes_key = curr_s.get_aes256gcm_key();
         auto cif = curr_s.get_cinfo_hash();
-        auto cif_bytes = session_item::u64_to_bytes(cif);
+        auto cif_bytes = lc_utils::u64_to_bytes(cif);
         auto sid = curr_s.get_server_sid();
 
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
@@ -296,7 +300,7 @@ public:
         offset += cif_bytes.size();
 
         // Padding the aes_nonce
-        session_item::generate_aes_nonce(client_aes_nonce);
+        lc_utils::generate_aes_nonce(client_aes_nonce);
         std::copy(client_aes_nonce.begin(), client_aes_nonce.end(), buffer.send_buffer.begin() + offset);
         offset += client_aes_nonce.size();
 
@@ -336,6 +340,30 @@ public:
         auto ret = recvfrom(client_fd, buffer.recv_raw_buffer.data(), buffer.recv_raw_buffer.size(), MSG_WAITALL, (struct sockaddr *)(&src_addr), (socklen_t *)&addr_len);
         addr = src_addr;
         return ret;
+    }
+
+    bool input_info(const std::string& prompt, std::string& dest_str, size_t max_times, const std::function<int(const std::string&)>& fmt_check_func) {
+        size_t retry = 0;
+        bool fmt_correct = false;
+        std::cout << prompt;
+        while(retry < max_times) {
+            std::cin >> dest_str;
+            ++ retry;
+            if(fmt_check_func(dest_str) != 0) {
+                std::cout << "Invalid format. Please retry (" << retry << '/' << max_times << ")." << std::endl;
+            }
+            else {
+                fmt_correct = true;
+                break;
+            }  
+        }
+        if(retry == max_times && !fmt_correct) {
+            std::cout << "Too many input failures. Abort." << std::endl;
+            return false;
+        }
+        else {
+            return true;
+        }
     }
     
     int run_client(void) {
@@ -469,7 +497,7 @@ public:
                         offset += 1 + ERR_CODE_BYTES;
                         std::copy(begin + offset, begin + offset + CIF_BYTES, cinfo_hash_bytes.begin());
                         offset += CIF_BYTES;
-                        auto cif = session_item::bytes_to_u64(cinfo_hash_bytes);
+                        auto cif = lc_utils::bytes_to_u64(cinfo_hash_bytes);
                         if(cif == session.get_cinfo_hash()) {
                             std::copy(begin + offset, begin + offset + crypto_box_PUBLICKEYBYTES, recved_server_pk.begin());
                             server_pk_mgr.update_server_pk(recved_server_pk);
@@ -505,6 +533,38 @@ public:
                 continue; 
             }
             // Now the status == 3.
+            std::string option, login_type, uemail, uname, password;
+            if(!input_info(main_menu, option, CLIENT_INPUT_RETRY, [](const std::string& op) {
+                if(op == "1" || op == "2" || op == "signup" || op == "signin") return 0;
+                return 1;
+            })) continue;
+
+            if(option == "1" || option == "signup") { // Signing up, require email, username & password
+                if(!input_info(input_email, uemail, CLIENT_INPUT_RETRY, lc_utils::email_fmt_check))
+                    continue;
+                if(!input_info(input_username, uname, CLIENT_INPUT_RETRY, lc_utils::user_name_fmt_check))
+                    continue;
+                if(!input_info(input_password, password, CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
+                    continue;
+            }
+            else {
+                if(!input_info(choose_login, login_type, CLIENT_INPUT_RETRY, [](const std::string& op) {
+                    if(op == "1" || op == "2" || op == "email" || op == "username") return 0;
+                    return 1;
+                })) continue;
+
+                if(login_type == "1" || login_type == "email") {
+                    if(!input_info(input_email, uemail, CLIENT_INPUT_RETRY, lc_utils::email_fmt_check))
+                        continue;
+                }
+                else {
+                    if(!input_info(input_username, uname, CLIENT_INPUT_RETRY, lc_utils::user_name_fmt_check))
+                        continue;
+                }
+                if(!input_info(input_password, password, CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
+                    continue;
+            }
+            std::cout << "OK" << std::endl;
         }
     }
 };

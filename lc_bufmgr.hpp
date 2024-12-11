@@ -2,6 +2,7 @@
 #define LC_BUFMGR_HPP
 
 #include "lc_consts.hpp"
+#include "lc_common.hpp"
 #include <array>
 #include <iostream>
 #include <cstring>
@@ -28,28 +29,6 @@ struct msg_buffer {
         if(bytes < 0 || bytes >= BUFF_SIZE)
             return BUFF_SIZE;
         return bytes;
-    }
-
-    static std::vector<std::string> split_buffer_by_null(const uint8_t *data, const size_t data_bytes, const size_t max_items) {
-        std::vector<std::string> ret;
-        const uint8_t *start = data;
-        const uint8_t *end = data + data_bytes;
-        const uint8_t *current = start;
-        while(current < end && ret.size() <= max_items) {
-            auto next_null = static_cast<const uint8_t *>(std::memchr(current, 0x00, (end - current)));
-            if(next_null != nullptr) {
-                size_t length = next_null - current;
-                ret.emplace_back(reinterpret_cast<const char *>(current), length);
-                current = next_null + 1;
-            }
-            else {
-                size_t length = end - current;
-                if(length > 0) 
-                    ret.emplace_back(reinterpret_cast<const char *>(current), length);
-                break;
-            }
-        }
-        return ret;
     }
 
     void clear_buffer() {
