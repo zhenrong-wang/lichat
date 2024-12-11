@@ -838,12 +838,12 @@ public:
                 
             std::cout << ">> Received from: " << std::endl << inet_ntoa(client_addr.sin_addr) \
                       << ':' << ntohs(client_addr.sin_port) << '\t';
-            std::cout << std::hex << std::setw(2) << std::setfill('0');
-
+            std::cout << std::endl << std::hex << std::setw(2) << std::setfill('0');
             for(size_t i = 0; i < bytes_recv; ++ i) {
                 std::cout << (int)buffer.recv_raw_buffer[i] << ' ';
             }
             std::cout << std::dec << bytes_recv << std::endl;
+            
             auto header = buffer.recv_raw_buffer[0];
             if(header == 0x00 || header == 0x01) {
                 if(buffer.recv_raw_bytes != 1 + CID_BYTES + crypto_box_PUBLICKEYBYTES) {
