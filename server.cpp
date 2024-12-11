@@ -6,7 +6,7 @@
 #include "lc_keymgr.hpp"
 #include "lc_consts.hpp"
 #include "lc_bufmgr.hpp"
-#include "lc_sesmgr.hpp"
+#include "lc_common.hpp"
 
 #include <iostream>
 #include <sys/socket.h>
@@ -42,6 +42,76 @@ struct msg_attr {
     }
 };
 
+// We use AES256-GCM algorithm here
+class session_item {
+    // Received
+    std::array<uint8_t, CID_BYTES> client_cid;
+    std::array<uint8_t, crypto_box_PUBLICKEYBYTES> client_public_key;
+
+    // Generated
+    uint64_t cinfo_hash; // Will be the unique key for unordered_map.
+    std::array<uint8_t, SID_BYTES> server_sid;
+    std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes256gcm_key;
+
+    struct sockaddr_in src_addr;   // the updated source_ddress. 
+
+    //  0 - empty
+    //  1 - prepared: cid + public_key + real cinfo_hash + server_sid + AES_key
+    //  2 - activated
+    int status; 
+public:
+    // Disable the default constructor
+    session_item() : status(0) {}
+
+    // Provide a random cinfo_hash but no client info.
+    session_item(const uint64_t& precalc_cinfo_hash) : status(0) {
+        cinfo_hash = precalc_cinfo_hash;
+    }
+
+    const struct sockaddr_in& get_src_addr() const {
+        return src_addr;
+    }
+    void set_src_addr(const sockaddr_in& addr) {
+        src_addr = addr;
+    }
+    const std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES>& get_aes_gcm_key() const {
+        return aes256gcm_key;
+    }
+    const std::array<uint8_t, CID_BYTES>& get_client_cid() const {
+        return client_cid;
+    }
+    const std::array<uint8_t, SID_BYTES>& get_server_sid() const {
+        return server_sid;
+    }
+    const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& get_client_public_key() const {
+        return client_public_key;
+    }
+    const int& get_status() const {
+        return status;
+    }
+    int prepare(std::array<uint8_t, CID_BYTES>& recv_client_cid, std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& recv_client_public_key, const curve25519_key_mgr& key_mgr, bool is_precalc_hash) {
+        if(!key_mgr.is_activated())
+            return -1;
+        if(status != 0)
+            return 1;
+        client_cid = recv_client_cid;
+        client_public_key = recv_client_public_key;
+        if(!is_precalc_hash) 
+            cinfo_hash = lc_utils::hash_client_info(recv_client_cid, recv_client_public_key);
+        randombytes_buf(server_sid.data(), server_sid.size());
+        if(crypto_box_beforenm(aes256gcm_key.data(), client_public_key.data(), key_mgr.get_secret_key().data()) != 0)
+            return 3;
+        status = 1;
+        return 0;
+    }
+    bool activate() {
+        if(status != 1) 
+            return false;
+        status = 2;
+        return true;
+    }
+};
+
 struct session_pool_stats {
     size_t total = 0;
     size_t empty = 0;
@@ -69,7 +139,7 @@ public:
     int prepare_add_session(std::array<uint8_t, CID_BYTES>& recv_client_cid, std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& recv_client_public_key, const curve25519_key_mgr& key_mgr) {
         if(!key_mgr.is_activated())
             return -1;
-        uint64_t key = session_item::hash_client_info(recv_client_cid, recv_client_public_key);
+        uint64_t key = lc_utils::hash_client_info(recv_client_cid, recv_client_public_key);
         if(sessions.find(key) != sessions.end())
             return 1;
         session_item session(key);
@@ -224,62 +294,7 @@ class user_mgr {
 public:
     user_mgr() {}
 
-    // Only Alphabet, numbers, and special chars are allowed.
-    // Length: 8-64
-    static int pass_fmt_check(const std::string& pass_str) {
-        if(pass_str.size() < PASSWORD_MIN_BYTES || pass_str.size() > PASSWORD_MAX_BYTES)
-            return -1; // Length error.
-        uint8_t contain_num = 0;
-        uint8_t contain_lower_char = 0;
-        uint8_t contain_special_char = 0;
-        uint8_t contain_upper_char = 0;
-        for(auto c : pass_str) {
-            if(std::isdigit(static_cast<unsigned char>(c))) {
-                contain_num = 1;
-                continue;
-            }
-            if(std::islower(static_cast<unsigned char>(c))) {
-                contain_lower_char = 1;
-                continue;
-            }
-            if(std::isupper(static_cast<unsigned char>(c))) {
-                contain_upper_char = 1;
-                continue;
-            }
-            if(std::find(special_chars.begin(), special_chars.end(), c) != special_chars.end()) {
-                contain_special_char = 1;
-                continue;
-            }
-            return 1; // Illegal char found.
-        }
-        if(contain_num + contain_special_char + contain_lower_char + contain_upper_char < 3)
-            return 2; // Not complex enough.
-        return 0; // Good to go.
-    }
-
-    static bool pass_hash(std::string& password, std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
-        auto ret = 
-        crypto_pwhash_str(
-            hashed_pwd.data(), 
-            password.c_str(), 
-            password.size(), 
-            crypto_pwhash_OPSLIMIT_INTERACTIVE, 
-            crypto_pwhash_MEMLIMIT_INTERACTIVE
-        );
-        password.clear(); // For security reasons, we clean the string after hashing.
-        if(ret == 0)
-            return true;
-        return false;
-    }
-
-    static int email_fmt_check(const std::string& email) {
-        if(email.empty() || email.size() > UEMAIL_MAX_BYTES)
-            return -1;
-        std::regex email_regex(R"((?i)[a-z0-9._%+-]+@(?:[a-z0-9-]+\.)+[a-z]{2,})");
-        if(!std::regex_match(email, email_regex)) 
-            return 1;
-        return 0;
-    }
+    
 
     bool is_email_registered(const std::string& email) {
         return (user_db.find(email) != user_db.end());
@@ -291,18 +306,6 @@ public:
         char b64_cstr[crypto_hash_sha256_BYTES * 2];
         sodium_bin2base64(b64_cstr, crypto_hash_sha256_BYTES * 2, sha256_hash, crypto_hash_sha256_BYTES, sodium_base64_VARIANT_ORIGINAL);
         return std::string(b64_cstr);
-    }
-
-    // Only Alphabet, numbers, and hyphen are allowed.
-    // Length: 4-64
-    static int user_name_fmt_check(const std::string& uname) {
-        if(uname.size() < ULOGIN_MIN_BYTES || uname.size() > UNAME_MAX_BYTES)
-            return -1; // Length error.
-        for(auto c : uname) {
-            if(!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_')
-                return 1; // Illegal char found.
-        }
-        return 0; // Good to go.
     }
 
     // If the provided username is duplicated, try randomize it with a suffix
@@ -371,7 +374,7 @@ public:
 
     bool add_user(const std::string& uemail, std::string& uname, std::string& user_password, uint8_t& err) {
         err = 0;
-        if(email_fmt_check(uemail) != 0) {
+        if(lc_utils::email_fmt_check(uemail) != 0) {
             err = 1;
             return false;
         }
@@ -379,16 +382,16 @@ public:
             err = 3;
             return false;
         }
-        if(user_name_fmt_check(uname) != 0) {
+        if(lc_utils::user_name_fmt_check(uname) != 0) {
             err = 5;
             return false;
         }
-        if(pass_fmt_check(user_password) != 0) {
+        if(lc_utils::pass_fmt_check(user_password) != 0) {
             err = 7;
             return false;
         }
         std::array<char, crypto_pwhash_STRBYTES> hashed_pass;
-        if(!pass_hash(user_password, hashed_pass)) {
+        if(!lc_utils::pass_hash(user_password, hashed_pass)) {
             err = 9;
             return false;
         }
@@ -596,7 +599,7 @@ public:
         }
     
         // Padding the aes_nonce
-        session_item::generate_aes_nonce(server_aes_nonce);
+        lc_utils::generate_aes_nonce(server_aes_nonce);
         std::copy(server_aes_nonce.begin(), server_aes_nonce.end(), buffer.send_buffer.begin() + offset);
         offset += server_aes_nonce.size();
 
@@ -706,7 +709,7 @@ public:
             auto aes_key = ptr_session->get_aes_gcm_key();
             auto addr = ptr_session->get_src_addr();
             auto sid = ptr_session->get_server_sid();
-            auto cif_bytes = session_item::u64_to_bytes(cif);
+            auto cif_bytes = lc_utils::u64_to_bytes(cif);
             if(simple_secure_send(header, aes_key,  addr, sid, cif_bytes, key_mgr, raw_msg, raw_n) >= 0)
                 ++ sent_out;
         }
@@ -802,7 +805,7 @@ public:
         std::array<uint8_t, crypto_box_PUBLICKEYBYTES> cpk;
         std::copy(pos, pos + CID_BYTES, cid.begin());
         std::copy(pos + CID_BYTES, pos + CID_BYTES + crypto_box_PUBLICKEYBYTES, cpk.begin());
-        uint64_t hash = session_item::hash_client_info(cid, cpk);
+        uint64_t hash = lc_utils::hash_client_info(cid, cpk);
         if(is_session_valid(hash)) {
             cinfo_hash = hash;
             return true;
@@ -855,7 +858,7 @@ public:
                 std::array<uint8_t, crypto_box_PUBLICKEYBYTES> cpk;
                 std::copy(pos, pos + CID_BYTES, cid.begin());
                 std::copy(pos + CID_BYTES,pos + CID_BYTES + crypto_box_PUBLICKEYBYTES, cpk.begin());
-                uint64_t cinfo_hash = session_item::hash_client_info(cid, cpk);
+                uint64_t cinfo_hash = lc_utils::hash_client_info(cid, cpk);
                 if(conns.get_session(cinfo_hash) != nullptr)
                     continue; // If the session has been established, ommit.
                 conns.prepare_add_session(cid, cpk, key_mgr);
@@ -867,7 +870,7 @@ public:
                 this_conn->set_src_addr(client_addr);
                 auto aes_key = this_conn->get_aes_gcm_key();
                 auto sid = this_conn->get_server_sid();
-                auto cinfo_hash_bytes = session_item::u64_to_bytes(cinfo_hash);
+                auto cinfo_hash_bytes = lc_utils::u64_to_bytes(cinfo_hash);
                 if(header == 0x00)
                     simple_secure_send(0x00, aes_key, client_addr, sid, cinfo_hash_bytes, key_mgr, ok, sizeof(ok));
                 else
@@ -902,7 +905,7 @@ public:
                 std::copy(pos, pos + CIF_BYTES, cinfo_hash_bytes.begin());
                 std::copy(pos + CIF_BYTES, pos + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES, client_aes_nonce.begin());
                 
-                auto cinfo_hash = session_item::bytes_to_u64(cinfo_hash_bytes);
+                auto cinfo_hash = lc_utils::bytes_to_u64(cinfo_hash_bytes);
                 auto this_conn = conns.get_session(cinfo_hash);
                 if(this_conn == nullptr)
                     continue; // If this is not a established session, omit.
@@ -954,7 +957,7 @@ public:
                 std::copy(pos, pos + CIF_BYTES, cinfo_hash_bytes.begin());
                 std::copy(pos + CIF_BYTES, pos + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES, client_aes_nonce.begin());
 
-                auto cinfo_hash = session_item::bytes_to_u64(cinfo_hash_bytes);
+                auto cinfo_hash = lc_utils::bytes_to_u64(cinfo_hash_bytes);
                 auto this_conn = conns.get_session(cinfo_hash);
                 if(this_conn == nullptr)
                     continue; // Not a valid session.
@@ -1016,7 +1019,7 @@ public:
                         if(msg_size < 1 + 1 + ULOGIN_MIN_BYTES + 1 + ULOGIN_MIN_BYTES + 1 + PASSWORD_MIN_BYTES + 1)
                             continue; // Invalid length.
 
-                        auto reg_info = msg_buffer::split_buffer_by_null(msg_body + 2, msg_size - 2, 3);
+                        auto reg_info = lc_utils::split_buffer_by_null(msg_body + 2, msg_size - 2, 3);
                         if(reg_info.size() < 3) 
                             continue; // Invalid format.
 
@@ -1037,7 +1040,7 @@ public:
                     if(signin_type != 0x00 && signin_type != 0x01) 
                         continue;
 
-                    auto signin_info = msg_buffer::split_buffer_by_null(msg_body + 2, msg_size - 2, 2);
+                    auto signin_info = lc_utils::split_buffer_by_null(msg_body + 2, msg_size - 2, 2);
                     if(signin_info.size() < 2)
                         continue;
                     
@@ -1063,7 +1066,7 @@ public:
                     if(clients.clear_ctx_by_uid(uemail, prev_cif)) {
                         const char auto_signout[] = "You've been signed in on another session. Signed out here.\n";
                         auto ptr_prev = conns.get_session(cif);
-                        auto cif_bytes = session_item::u64_to_bytes(cif);
+                        auto cif_bytes = lc_utils::u64_to_bytes(cif);
                         if(ptr_prev != nullptr) {
                             simple_secure_send(0x10, 
                                 ptr_prev->get_aes_gcm_key(), 

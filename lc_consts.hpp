@@ -26,6 +26,8 @@ constexpr size_t CLIENT_RECV_MIN_BYTES = 1 + ERR_CODE_BYTES;
 
 constexpr size_t SPECIAL_CHAR_NUM = 26;
 
+constexpr size_t CLIENT_INPUT_RETRY = 3;
+
 constexpr std::array<char, SPECIAL_CHAR_NUM> special_chars = {
     '~', '!', '@', '#', '$', '%', '^', '&', '(', ')', '{', '}', '[',
     ']', '-', '_', '=', '+', ';', ':', ',', '.', '<', '>', '/', '|'
@@ -54,6 +56,8 @@ constexpr char client_side_server_pk[] = "./server_pk_local.bin";
 constexpr char server_internal_fatal[] = "Server internal fatal error.\n";
 constexpr char restart_handshake[] = "Session failed. Restart handshake.\n";
 constexpr char main_menu[] = "1. signup\n2. signin\nPlease choose (1 | 2): ";
+constexpr char choose_login[] = "1. email\n2. username\nPlease choose a login type (1 | 2): ";
+constexpr char input_email[] =    "E-mail: ";
 constexpr char input_username[] = "Username: ";
 constexpr char input_password[] = "Password: ";
 constexpr char option_error[] = "Option error, please input 1 or 2\n";
