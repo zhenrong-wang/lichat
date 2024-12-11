@@ -521,7 +521,7 @@ int main(int argc, char **argv) {
         std::cout << "Trying to connect to server " << addr_str << ":" << port_str << std::endl;
         if(!new_client.set_server_addr(addr_str, port_str)) {
             std::cout << "Warning: Failed to connect to server " << addr_str << ":" << port_str << std::endl;
-            std::cout << "Will use the default server localhost:8081." << std::endl;
+            std::cout << "Warning: Will use the default server localhost:8081." << std::endl;
         }
         else
             std::cout << "Will connect to the provided server " << addr_str << ":" << port_str << std::endl;
