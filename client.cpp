@@ -523,11 +523,13 @@ int main(int argc, char **argv) {
             std::cout << "Warning: Failed to connect to server " << addr_str << ":" << port_str << std::endl;
             std::cout << "Warning: Will use the default server localhost:8081." << std::endl;
         }
-        else
+        else {
             std::cout << "Will connect to the provided server " << addr_str << ":" << port_str << std::endl;
+        }
     }
-    else
+    else {
         std::cout << "Will use the default server localhost:8081." << std::endl;
+    }
     
     if(!new_client.start_client()) {
         std::cout << "Failed to start client. Error Code: " 
