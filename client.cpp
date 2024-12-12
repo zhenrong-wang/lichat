@@ -702,6 +702,7 @@ public:
                 std::cout << session.get_status() << std::endl;
                 continue;
             }
+            //std::cout << "OK" << std::endl;
         }
     }
 };
