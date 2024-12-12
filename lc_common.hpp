@@ -9,6 +9,7 @@
 #include "lc_consts.hpp"
 #include <iostream>
 #include <netdb.h>
+#include <arpa/inet.h>
 
 namespace lc_utils {
 
