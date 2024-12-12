@@ -8,6 +8,7 @@
 #include "sodium.h"
 #include "lc_consts.hpp"
 #include <iostream>
+#include <netdb.h>
 
 namespace lc_utils {
 
@@ -131,6 +132,37 @@ namespace lc_utils {
 
     static size_t calc_encrypted_len(const size_t raw_bytes) {
         return 1 + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + CIF_BYTES + raw_bytes + crypto_aead_aes256gcm_ABYTES;
+    }
+
+     static bool string_to_u16(const std::string& str, uint16_t& res) {
+        if(str.size() > 5)
+            return false;
+        for(auto c : str) {
+            if(!isdigit(c))
+                return false;
+        }
+        unsigned long n = std::stoul(str);
+        if(n > std::numeric_limits<uint16_t>::max())
+            return false;
+        res = static_cast<uint16_t>(n);
+        return true;
+    }
+
+    static bool get_addr_info(std::string& addr_str, std::array<char, INET_ADDRSTRLEN>& first_ipv4_addr) {
+        if(addr_str.empty())
+            return false;
+        struct addrinfo hints, *res = nullptr;
+        std::memset(&hints, 0, sizeof hints);
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        std::memset(first_ipv4_addr.data(), 0, first_ipv4_addr.size());
+        auto status = getaddrinfo(addr_str.c_str(), nullptr, &hints, &res);
+        if(status != 0)
+            return false;
+        struct sockaddr_in *first = (sockaddr_in *)res->ai_addr;
+        inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), first_ipv4_addr.size());
+        freeaddrinfo(res);
+        return true;
     }
 }
 
