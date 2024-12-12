@@ -187,36 +187,6 @@ class lichat_client {
     int last_error;
 
 public:
-    static bool string_to_u16(const std::string& str, uint16_t& res) {
-        if(str.size() > 5)
-            return false;
-        for(auto c : str) {
-            if(!isdigit(c))
-                return false;
-        }
-        unsigned long n = std::stoul(str);
-        if(n > std::numeric_limits<uint16_t>::max())
-            return false;
-        res = static_cast<uint16_t>(n);
-        return true;
-    }
-
-    static bool get_addr_info(std::string& addr_str, std::array<char, INET_ADDRSTRLEN>& first_ipv4_addr) {
-        if(addr_str.empty())
-            return false;
-        struct addrinfo hints, *res = nullptr;
-        std::memset(&hints, 0, sizeof hints);
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        std::memset(first_ipv4_addr.data(), 0, first_ipv4_addr.size());
-        auto status = getaddrinfo(addr_str.c_str(), nullptr, &hints, &res);
-        if(status != 0)
-            return false;
-        struct sockaddr_in *first = (sockaddr_in *)res->ai_addr;
-        inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), first_ipv4_addr.size());
-        freeaddrinfo(res);
-        return true;
-    }
 
     lichat_client() : 
     client_fd(-1), server_pk_mgr(client_server_pk_mgr()), session(client_session()), client_key(curve25519_key_mgr()), buffer(msg_buffer()), last_error(0) {
@@ -233,7 +203,7 @@ public:
     bool set_server_addr(std::string& addr_str, std::string& port_str) {
         std::array<char, INET_ADDRSTRLEN> ipv4_addr;
         uint16_t port_num;
-        if(!get_addr_info(addr_str, ipv4_addr) || !string_to_u16(port_str, port_num)) 
+        if(!lc_utils::get_addr_info(addr_str, ipv4_addr) || !lc_utils::string_to_u16(port_str, port_num)) 
             return false;
         server_port = port_num;
         server_addr.sin_addr.s_addr = inet_addr(ipv4_addr.data());
