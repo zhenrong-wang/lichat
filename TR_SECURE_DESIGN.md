@@ -94,6 +94,17 @@ Now, with the validated handshake, server and client can send/recv messages secu
     - If `server_sid`s don't match, send `0xCF` `SIDERR` to client, and the client will restart the handshake. 
 - Client receives the message `0x10 AES_nonce`, tries to decrypt the message with the local stored `AES_key` `AES_attr`, and gets the `yes!` message body.
 
+## 2.5 Public Messaging
+
+Although the secure communication channel has been established, clients and servers still can do public/insecure messaging. E.g. System broadcasting would not be encrypted for performance consideration. 
+
+Insecure message format is easy:
+
+- The header is `0x11`, it is 1 byte.
+- Following the header flag is the message body.
+
+None of the information above is encrypted. 
+
 ## 2.5 Force Confirmation
 
 Ordinary messages from the server to client on a session don't require a confirmation. To enable a session checking, we define a special header `0x1F` for activated sessions. Server may send a backend **encrypted message** `?` with a header `0x1F` to client, and the client **must** send back a **encrypted** message `!`  with a header `0x1F` immediately to keep alive. Otherwise the server may disable the session actively. 

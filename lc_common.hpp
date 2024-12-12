@@ -68,30 +68,23 @@ namespace lc_utils {
     static int pass_fmt_check(const std::string& pass_str) {
         if(pass_str.size() < PASSWORD_MIN_BYTES || pass_str.size() > PASSWORD_MAX_BYTES)
             return -1; // Length error.
-        uint8_t contain_num = 0;
-        uint8_t contain_lower_char = 0;
-        uint8_t contain_special_char = 0;
-        uint8_t contain_upper_char = 0;
+        uint8_t num = 0, lower = 0, upper = 0, special = 0;
         for(auto c : pass_str) {
             if(std::isdigit(static_cast<unsigned char>(c))) {
-                contain_num = 1;
-                continue;
+                num = 1; continue;
             }
             if(std::islower(static_cast<unsigned char>(c))) {
-                contain_lower_char = 1;
-                continue;
+                lower = 1; continue;
             }
             if(std::isupper(static_cast<unsigned char>(c))) {
-                contain_upper_char = 1;
-                continue;
+                upper = 1; continue;
             }
             if(std::find(special_chars.begin(), special_chars.end(), c) != special_chars.end()) {
-                contain_special_char = 1;
-                continue;
+                special = 1; continue;
             }
             return 1; // Illegal char found.
         }
-        if(contain_num + contain_special_char + contain_lower_char + contain_upper_char < 3)
+        if((num + special + lower + upper < 3) || (special == 0))
             return 2; // Not complex enough.
         return 0; // Good to go.
     }
@@ -130,6 +123,14 @@ namespace lc_utils {
         if(!std::regex_match(email, email_regex)) 
             return 1;
         return 0;
+    }
+
+    static int calc_aes_key(std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES>& aes_key, const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& pk, const std::array<uint8_t, crypto_box_SECRETKEYBYTES>& sk) {
+        return crypto_box_beforenm(aes_key.data(), pk.data(), sk.data());
+    }
+
+    static size_t calc_encrypted_len(const size_t raw_bytes) {
+        return 1 + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + CIF_BYTES + raw_bytes + crypto_aead_aes256gcm_ABYTES;
     }
 }
 
