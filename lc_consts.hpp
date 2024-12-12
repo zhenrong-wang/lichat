@@ -53,27 +53,18 @@ constexpr char default_client_pk[] = "./client_public_key.bin";
 constexpr char default_client_sk[] = "./client_secret_key.bin";
 constexpr char client_side_server_pk[] = "./server_pk_local.bin";
 
+constexpr char server_bcast_header[] = "[SYSTEM_BROADCASTING]:";
 constexpr char server_internal_fatal[] = "Server internal fatal error.\n";
 constexpr char restart_handshake[] = "Session failed. Restart handshake.\n";
-constexpr char main_menu[] = "1. signup\n2. signin\nPlease choose (1 | 2): ";
-constexpr char choose_login[] = "1. email\n2. username\nPlease choose a login type (1 | 2): ";
+constexpr char main_menu[] = "1. signup\n2. signin\nPlease choose (1 | 2) or (signup | signin): ";
+constexpr char choose_login[] = "1. email\n2. username\nPlease choose a login type (1 | 2) or (email | username): ";
 constexpr char input_email[] =    "E-mail: ";
-constexpr char input_username[] = "Username: ";
-constexpr char input_password[] = "Password: ";
+constexpr char input_username[] = "\nUsername format:\n1) 4-64 ascii chars.\n2) Only a-z A-Z 0-9 - _ are allowed.\n\nUsername: ";
+constexpr char input_password[] = "\nPassword format:\n1) 4-32 ascii chars.\n2) Must contain at least 3 types, must contain special char(s):\n   [lowercase]: a-z\n   [UPPERCASE]: A-Z\n   [#numbers#]: 0-9\n   [special_c]: ~!@#$%^&(){}[]-_=+;:,.<>/|\n\nPassword: ";
 constexpr char option_error[] = "Option error, please input 1 or 2\n";
 constexpr char user_uid_exist[] = "User already exists.\n";
 constexpr char user_uid_error[] = "User does not exist.\n";
 constexpr char password_error[] = "Password doesn't match.\n";
-constexpr char invalid_uid_fmt[] = "Invalid uid format, rules to follow:\n\
-    4-64 ascii chars.\n\
-    a-z, A-Z, numbers, and/or hyphen-.\n";
-constexpr char invalid_uid_len[] = "Invalid uid length: 4-64\n";
-constexpr char invalid_pass_fmt[] = "Invalid password format, rules to follow:\n\
-    4-32 ascii chars.\n\
-    a-z, A-Z, numbers, and special chars, no spaces.\n\
-    * Must contains at least 3 out of 4 types above.\n";
-constexpr char invalid_pass[] = "Not a valid password string.\n";
-constexpr char invalid_pass_len[] = "Invalid password length: 4-32\n";
 constexpr char signup_ok[] = "[SYSTEM_WELCOME] You've signed up and signed in.\n\
 [SYSTEM_WELCOME] Send ~:q! to sign out.\n\
 [SYSTEM_WELCOME] Send ~-@uid: to tag another user.\n\

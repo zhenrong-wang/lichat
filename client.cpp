@@ -76,24 +76,22 @@ class client_session {
 
     // Received
     std::array<uint8_t, SID_BYTES> server_sid;
-    uint64_t cinfo_hash; // Will be the unique key for unordered_map.
+    uint64_t cinfo_hash; 
+    std::array<uint8_t, CIF_BYTES> cinfo_hash_bytes;
     
     struct sockaddr_in src_addr;   // the updated source_ddress. 
     //  0 - Empty: cid generated
     //  1 - Standby: client info sent, waiting for server response.
     //  2 - Prepared: server response received and good, sent ok waiting for server ok.
     //      cid + server_pk + aes256gcm_key + server_sid + cinfo_hash
-    //  3 - Activated.
+    //  3 - Sent user credentials, waiting for server ok
+    //  4 - Activated.
     int status; 
     bool is_server_key_req;
 
 public:
     client_session() : status(0) {
         randombytes_buf(client_cid.data(), client_cid.size());
-    }
-
-    static int calc_aes_key(std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES>& aes_key, const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& pk, const std::array<uint8_t, crypto_box_SECRETKEYBYTES>& sk) {
-        return crypto_box_beforenm(aes_key.data(), pk.data(), sk.data());
     }
 
     void sent_cinfo(const bool server_key_req) {
@@ -110,32 +108,36 @@ public:
         status = 0;
     }
 
-    int prepare(const client_server_pk_mgr& server_pk_mgr, const curve25519_key_mgr& client_key, const std::array<uint8_t, SID_BYTES>& sid, const std::array<uint8_t, CIF_BYTES>& cif) {
+    int prepare(const client_server_pk_mgr& server_pk_mgr, const curve25519_key_mgr& client_key, const std::array<uint8_t, SID_BYTES>& sid, const std::array<uint8_t, CIF_BYTES>& cif_bytes) {
         if(status != 1)
             return -1;  // Not quite possible
         if(!server_pk_mgr.is_ready() || !client_key.is_activated()) 
             return -3;  // key_mgr not activated
         uint64_t cif_calc = lc_utils::hash_client_info(client_cid, client_key.get_public_key());
-
-        uint64_t cif_calc2 = lc_utils::hash_client_info(client_cid, client_key.get_public_key());
-        uint64_t cif_recv = lc_utils::bytes_to_u64(cif);
+        uint64_t cif_recv = lc_utils::bytes_to_u64(cif_bytes);
         if(cif_calc != cif_recv) 
             return 1;  //  Need to report to server, msg error
         if(crypto_box_beforenm(aes256gcm_key.data(), server_pk_mgr.get_server_pk().data(), client_key.get_secret_key().data()) != 0)
             return 3;  //  Need to report to server, msg error
         server_sid = sid;
         cinfo_hash = cif_recv;
+        cinfo_hash_bytes = cif_bytes;
         status = 2;
         return 0;      
     }
-    
-    bool activate() {
-        if(status != 2) 
-            return false;
+
+    void activate() {
         status = 3;
-        return true;
     }
-    
+
+    void sent_auth() {
+        status = 4;
+    }
+
+    void auth_ok() {
+        status = 5;
+    }
+
     void set_status(int s) {
         status = s;
     }
@@ -158,6 +160,10 @@ public:
 
     const auto& get_cinfo_hash() const {
         return cinfo_hash;
+    }
+
+    const auto& get_cinfo_hash_bytes() const {
+        return cinfo_hash_bytes;
     }
 
     const auto& get_src_addr() const {
@@ -236,6 +242,33 @@ public:
         return true;
     }
 
+    std::string parse_server_auth_error(const uint8_t err_code) {
+        if(err_code == 1)
+            return "E-mail format error.";
+        else if(err_code == 3)
+            return "E-mail already signed up.";
+        else if(err_code == 5)
+            return "Username format error.";
+        else if(err_code == 7)
+            return "Password format error.";
+        else if(err_code == 9)
+            return "Failed to hash your password.";
+        else if(err_code == 11)
+            return "Failed to randomize your username.";
+
+        else if(err_code == 2) 
+            return "E-mail not signed up.";
+        else if(err_code == 4)
+            return "Username not signed up.";
+        else if(err_code == 6)
+            return "Server internal error.";
+        else if(err_code == 8)
+            return "Password incorrect.";
+        
+        else
+            return "Unknown server error.";
+    }
+
     // Close server and possible FD
     bool close_client(int err) {
         last_error = err;
@@ -260,6 +293,41 @@ public:
             return close_client(3);
         std::cout << "lichat client started." << std::endl;
         return true;
+    }
+
+    std::vector<uint8_t> assemble_user_info(const bool is_signup, const bool is_login_uemail, const std::string& uemail, const std::string& uname, const std::string& password) {
+        size_t vec_size = 0, offset = 0;
+        if(is_signup) {
+            vec_size = 1 + 1 + uemail.size() + 1 + uname.size() + 1 + password.size() + 1;
+            std::vector<uint8_t> vec(vec_size, 0x00);
+            offset += 2;
+            vec.insert(vec.begin() + offset, uemail.begin(), uemail.end());
+            offset += (uemail.size() + 1);
+            vec.insert(vec.begin() + offset, uname.begin(), uname.end());
+            offset += (uname.size() + 1);
+            vec.insert(vec.begin() + offset, password.begin(), password.end());
+            return vec;
+        }   
+        if(is_login_uemail) 
+            vec_size = 1 + 1 + uemail.size() + 1 + password.size() + 1;
+        else
+            vec_size = 1 + 1 + uname.size() + 1 + password.size() + 1;
+        std::vector<uint8_t> vec(vec_size);
+        vec[0] = 0x01;
+        if(is_login_uemail) {
+            vec[1] = 0x00;
+            offset += 2;
+            vec.insert(vec.begin() + offset, uemail.begin(), uemail.end());
+            offset += uemail.size() + 1;
+        }
+        else {
+            vec[1] = 0x01;
+            offset += 2;
+            vec.insert(vec.begin() + offset, uname.begin(), uname.end());
+            offset += uname.size() + 1;
+        }
+        vec.insert(vec.begin() + offset, password.begin(), password.end());
+        return vec;
     }
 
     void print_menu(void) {
@@ -333,6 +401,35 @@ public:
         return ret;
     }
 
+    bool decrypt_recv_0x10raw_bytes(const size_t recved_raw_bytes) {
+        if(recved_raw_bytes < lc_utils::calc_encrypted_len(1))
+            return false;
+        auto aes_key = session.get_aes256gcm_key();
+        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
+        std::array<uint8_t, SID_BYTES> sid;
+        std::array<uint8_t, CIF_BYTES> cif_bytes;
+        auto begin = buffer.recv_raw_buffer.begin();
+        size_t offset = 0; // Omit first byte 0x10.
+        unsigned long long aes_decrypted_len = 0;
+        auto header = buffer.recv_raw_buffer[0];
+        if(header != 0x10) 
+            return false;
+        ++ offset;
+        std::copy(begin + offset, begin + offset + crypto_aead_aes256gcm_NPUBBYTES, aes_nonce.begin());
+        offset += crypto_aead_aes256gcm_NPUBBYTES;
+        auto ret = 
+            (crypto_aead_aes256gcm_decrypt(
+                buffer.recv_aes_buffer.begin(), &aes_decrypted_len, NULL,
+                begin + offset, recved_raw_bytes - offset,
+                NULL, 0,
+                aes_nonce.data(), aes_key.data()
+            ) == 0);
+        buffer.recv_aes_bytes = aes_decrypted_len;
+        if(aes_decrypted_len <= SID_BYTES + CIF_BYTES)
+            return false;
+        return ret;
+    }
+
     ssize_t wait_server_response(struct sockaddr_in& addr) {
         buffer.clear_buffer();
         auto src_addr = session.get_src_addr();
@@ -342,12 +439,13 @@ public:
         return ret;
     }
 
-    bool input_info(const std::string& prompt, std::string& dest_str, size_t max_times, const std::function<int(const std::string&)>& fmt_check_func) {
+    bool user_input(const std::string& prompt, std::string& dest_str, size_t max_times, 
+        const std::function<int(const std::string&)>& fmt_check_func) {
         size_t retry = 0;
         bool fmt_correct = false;
         std::cout << prompt;
         while(retry < max_times) {
-            std::cin >> dest_str;
+            std::getline(std::cin, dest_str);
             ++ retry;
             if(fmt_check_func(dest_str) != 0) {
                 std::cout << "Invalid format. Please retry (" << retry << '/' << max_times << ")." << std::endl;
@@ -379,7 +477,7 @@ public:
         std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes_key;
         std::array<uint8_t, crypto_box_PUBLICKEYBYTES> recved_server_pk;
         std::array<uint8_t, SID_BYTES> server_sid;
-        std::array<uint8_t, CIF_BYTES> cinfo_hash_bytes;
+        std::array<uint8_t, CIF_BYTES> recved_cif_bytes;
         struct sockaddr_in msg_addr;
         size_t aes_encrypted_len = 0;
         size_t aes_decrypted_len = 0;
@@ -405,7 +503,7 @@ public:
                 session.sent_cinfo((buffer.send_buffer[0] == 0x00)); // 0x00: requested server key, 0x01: not requested server key
                 continue;
             }
-            if(status == 1 || status == 2) {
+            if(status == 1 || status == 2 || status == 4) {
                 buffer.recv_raw_bytes = wait_server_response(msg_addr);
                 if(buffer.recved_insuff_bytes(CLIENT_RECV_MIN_BYTES) || buffer.recved_overflow()) 
                     continue; // If size is invalid, ommit.
@@ -438,7 +536,7 @@ public:
                     }
                     std::copy(begin + offset, begin + offset + crypto_aead_aes256gcm_NPUBBYTES, server_aes_nonce.begin());
                     offset += crypto_aead_aes256gcm_NPUBBYTES;
-                    if(client_session::calc_aes_key(aes_key, server_pk_mgr.get_server_pk(), client_key.get_secret_key()) != 0) {
+                    if(lc_utils::calc_aes_key(aes_key, server_pk_mgr.get_server_pk(), client_key.get_secret_key()) != 0) {
                         continue;
                     }
                     auto is_aes_ok = 
@@ -457,8 +555,8 @@ public:
                     if(is_aes_ok && is_msg_ok) {
                         session.update_src_addr(msg_addr);
                         std::copy(buffer.recv_aes_buffer.begin(), buffer.recv_aes_buffer.begin() + SID_BYTES, server_sid.begin());
-                        std::copy(buffer.recv_aes_buffer.begin() + SID_BYTES, buffer.recv_aes_buffer.begin() + SID_BYTES + CIF_BYTES, cinfo_hash_bytes.begin());
-                        auto ret = session.prepare(server_pk_mgr, client_key, server_sid, cinfo_hash_bytes);
+                        std::copy(buffer.recv_aes_buffer.begin() + SID_BYTES, buffer.recv_aes_buffer.begin() + SID_BYTES + CIF_BYTES, recved_cif_bytes.begin());
+                        auto ret = session.prepare(server_pk_mgr, client_key, server_sid, recved_cif_bytes);
                         if(ret == 0) {
                             simple_secure_send(0x02, session, ok, sizeof(ok));
                             std::cout << "Secure session prepared OK!\t" << session.get_status() << std::endl;
@@ -488,83 +586,122 @@ public:
                     session.reset();
                     continue;
                 }
-                // Now status == 2
-                offset = 0;
-                auto header = buffer.recv_raw_buffer[0];
-                auto begin = buffer.recv_raw_buffer.begin();
-                if(buffer.recv_raw_bytes == 1 + ERR_CODE_BYTES + CIF_BYTES + crypto_box_PUBLICKEYBYTES) {
-                    if(std::memcmp(begin, server_ef_keyerr, sizeof(server_ef_keyerr) == 0) || std::memcmp(begin, server_df_msgerr, sizeof(server_df_msgerr) == 0)) {
-                        offset += 1 + ERR_CODE_BYTES;
-                        std::copy(begin + offset, begin + offset + CIF_BYTES, cinfo_hash_bytes.begin());
-                        offset += CIF_BYTES;
-                        auto cif = lc_utils::bytes_to_u64(cinfo_hash_bytes);
-                        if(cif == session.get_cinfo_hash()) {
-                            std::copy(begin + offset, begin + offset + crypto_box_PUBLICKEYBYTES, recved_server_pk.begin());
-                            server_pk_mgr.update_server_pk(recved_server_pk);
-                            session.reset();
-                            continue;
+                if(status == 2) {
+                    offset = 0;
+                    auto header = buffer.recv_raw_buffer[0];
+                    auto begin = buffer.recv_raw_buffer.begin();
+                    if(buffer.recv_raw_bytes == 1 + ERR_CODE_BYTES + CIF_BYTES + crypto_box_PUBLICKEYBYTES) {
+                        if(std::memcmp(begin, server_ef_keyerr, sizeof(server_ef_keyerr) == 0) || std::memcmp(begin, server_df_msgerr, sizeof(server_df_msgerr) == 0)) {
+                            offset += 1 + ERR_CODE_BYTES;
+                            std::copy(begin + offset, begin + offset + CIF_BYTES, recved_cif_bytes.begin());
+                            offset += CIF_BYTES;
+                            auto cif = lc_utils::bytes_to_u64(recved_cif_bytes);
+                            if(cif == session.get_cinfo_hash()) {
+                                std::copy(begin + offset, begin + offset + crypto_box_PUBLICKEYBYTES, recved_server_pk.begin());
+                                server_pk_mgr.update_server_pk(recved_server_pk);
+                                session.reset();
+                                continue;
+                            }
                         }
                     }
+                    if(header != 0x02) 
+                        continue; // Now, only handles 0x02 header.
+                        // Expected: 0x02 + aes_nonce + encrypted(sid + cif + ok + checksum)
+                    if(buffer.recv_raw_bytes != 1 + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + CIF_BYTES + sizeof(ok) + crypto_aead_aes256gcm_ABYTES)
+                        continue; // Invalid message length.
+                    ++ offset;
+                    std::copy(begin + offset, begin + offset + crypto_aead_aes256gcm_NPUBBYTES, server_aes_nonce.begin());
+                    offset += crypto_aead_aes256gcm_NPUBBYTES;
+                    auto is_aes_ok = 
+                        (crypto_aead_aes256gcm_decrypt(
+                            buffer.recv_aes_buffer.begin(), (unsigned long long *)(&aes_decrypted_len),
+                            NULL,
+                            begin + offset, SID_BYTES + CIF_BYTES + sizeof(ok) + crypto_aead_aes256gcm_ABYTES,
+                            NULL, 0,
+                            server_aes_nonce.data(), session.get_aes256gcm_key().data()
+                        ) == 0);
+                    buffer.recv_aes_bytes = aes_decrypted_len;
+                    if(!is_aes_ok)
+                        continue; // Invalid key, probably not from the previous server.
+                    if(std::memcmp(buffer.recv_aes_buffer.begin() + SID_BYTES + CIF_BYTES, ok, sizeof(ok)) != 0)
+                        continue; // Not expected message ok.
+                    session.update_src_addr(msg_addr);
+                    session.activate(); // status already is confirmed as 2, so activate would always be true.
+                    std::cout << "Secure session activated OK!\t" << session.get_status() << std::endl;
+                    continue; 
                 }
-                if(header != 0x02) 
-                    continue; // Now, only handles 0x02 header.
-                    // Expected: 0x02 + aes_nonce + encrypted(sid + cif + ok + checksum)
-                if(buffer.recv_raw_bytes != 1 + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + CIF_BYTES + sizeof(ok) + crypto_aead_aes256gcm_ABYTES)
-                    continue; // Invalid message length.
-                ++ offset;
-                std::copy(begin + offset, begin + offset + crypto_aead_aes256gcm_NPUBBYTES, server_aes_nonce.begin());
-                offset += crypto_aead_aes256gcm_NPUBBYTES;
-                auto is_aes_ok = 
-                    (crypto_aead_aes256gcm_decrypt(
-                        buffer.recv_aes_buffer.begin(), (unsigned long long *)(&aes_decrypted_len),
-                        NULL,
-                        begin + offset, SID_BYTES + CIF_BYTES + sizeof(ok) + crypto_aead_aes256gcm_ABYTES,
-                        NULL, 0,
-                        server_aes_nonce.data(), session.get_aes256gcm_key().data()
-                    ) == 0);
-                buffer.recv_aes_bytes = aes_decrypted_len;
-                if(!is_aes_ok)
-                    continue; // Invalid key, probably not from the previous server.
-                if(std::memcmp(buffer.recv_aes_buffer.begin() + SID_BYTES + CIF_BYTES, ok, sizeof(ok)) != 0)
-                    continue; // Not expected message ok.
-                session.update_src_addr(msg_addr);
-                session.activate(); // status already is confirmed as 2, so activate would always be true.
-                std::cout << "Secure session activated OK!\t" << session.get_status() << std::endl;
-                continue; 
+                // Now status == 4
+                if(buffer.recv_raw_bytes < lc_utils::calc_encrypted_len(1) || buffer.recv_raw_bytes > lc_utils::calc_encrypted_len(UNAME_MAX_BYTES))
+                    continue;
+                if(buffer.recv_raw_buffer[0] != 0x10)
+                    continue;
+                if(!decrypt_recv_0x10raw_bytes(buffer.recv_raw_bytes))
+                    continue;
+                auto beg = buffer.recv_aes_buffer.begin();
+                std::copy(beg, beg + SID_BYTES, server_sid.begin());
+                std::copy(beg + SID_BYTES, beg + SID_BYTES + CIF_BYTES, recved_cif_bytes.begin());
+                if(recved_cif_bytes != session.get_cinfo_hash_bytes() || server_sid != session.get_server_sid())
+                    continue;
+                auto msg_body = beg + SID_BYTES + CIF_BYTES;
+                auto msg_size = buffer.recv_aes_bytes - SID_BYTES - CIF_BYTES;
+                if(msg_size < 1 || msg_size > UNAME_MAX_BYTES)
+                    continue;
+                if(msg_size == 1) {
+                    std::cout << "Auth failed and rejected by the server." << std::endl;
+                    std::cout << parse_server_auth_error(*msg_body) << std::endl;
+                    session.set_status(3);
+                    continue;
+                }
+                else if(msg_size == 2 && std::memcmp(msg_body, ok, sizeof(ok))== 0) {
+                    std::cout << "Auth succeeded by the server." << std::endl;
+                    session.auth_ok();
+                }
+                else {
+                    std::cout << "Auth succeeded by the server with a randomized username." << std::endl;
+                    std::cout << "Please *DO* remember this username: " << std::string(reinterpret_cast<char *>(msg_body), msg_size) << std::endl;
+                    session.auth_ok();
+                }
             }
-            // Now the status == 3.
-            std::string option, login_type, uemail, uname, password;
-            if(!input_info(main_menu, option, CLIENT_INPUT_RETRY, [](const std::string& op) {
-                if(op == "1" || op == "2" || op == "signup" || op == "signin") return 0;
-                return 1;
-            })) continue;
-
-            if(option == "1" || option == "signup") { // Signing up, require email, username & password
-                if(!input_info(input_email, uemail, CLIENT_INPUT_RETRY, lc_utils::email_fmt_check))
-                    continue;
-                if(!input_info(input_username, uname, CLIENT_INPUT_RETRY, lc_utils::user_name_fmt_check))
-                    continue;
-                if(!input_info(input_password, password, CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
-                    continue;
-            }
-            else {
-                if(!input_info(choose_login, login_type, CLIENT_INPUT_RETRY, [](const std::string& op) {
-                    if(op == "1" || op == "2" || op == "email" || op == "username") return 0;
-                    return 1;
+            if(status == 3) {
+                std::string option, login_type, uemail, uname, password;
+                if(!user_input(main_menu, option, CLIENT_INPUT_RETRY, [](const std::string& op) {
+                    if(op == "1" || op == "2" || op == "signup" || op == "signin") return 0;
+                        return 1;
                 })) continue;
-
-                if(login_type == "1" || login_type == "email") {
-                    if(!input_info(input_email, uemail, CLIENT_INPUT_RETRY, lc_utils::email_fmt_check))
+                if(option == "1" || option == "signup") { // Signing up, require email, username & password
+                    if(!user_input(input_email, uemail, CLIENT_INPUT_RETRY, lc_utils::email_fmt_check))
+                        continue;
+                    if(!user_input(input_username, uname, CLIENT_INPUT_RETRY, lc_utils::user_name_fmt_check))
+                        continue;
+                    if(!user_input(input_password, password, CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
                         continue;
                 }
                 else {
-                    if(!input_info(input_username, uname, CLIENT_INPUT_RETRY, lc_utils::user_name_fmt_check))
+                    if(!user_input(choose_login, login_type, CLIENT_INPUT_RETRY, [](const std::string& op) {
+                        if(op == "1" || op == "2" || op == "email" || op == "username") return 0;
+                        return 1;
+                    })) continue;
+
+                    if(login_type == "1" || login_type == "email") {
+                        if(!user_input(input_email, uemail, CLIENT_INPUT_RETRY, lc_utils::email_fmt_check))
+                            continue;
+                    }
+                    else {
+                        if(!user_input(input_username, uname, CLIENT_INPUT_RETRY, lc_utils::user_name_fmt_check))
+                            continue;
+                    }
+                    if(!user_input(input_password, password, CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
                         continue;
                 }
-                if(!input_info(input_password, password, CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
-                    continue;
+                auto user_info = assemble_user_info(
+                    (option == "1" || option == "signup"), 
+                    (login_type == "1" || login_type == "email"),
+                    uemail, uname, password);
+                simple_secure_send(0x10, session, user_info.data(), user_info.size());
+                session.sent_auth();
+                std::cout << session.get_status() << std::endl;
+                continue;
             }
-            std::cout << "OK" << std::endl;
         }
     }
 };
