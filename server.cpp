@@ -768,6 +768,52 @@ public:
         return sent_out;
     }
 
+    bool decrypt_recv_0x10raw_bytes(const size_t recved_raw_bytes, uint64_t& ret_cif) {
+        if(recved_raw_bytes < lc_utils::calc_encrypted_len(1))
+            return false;
+        size_t offset = 0; // Omit first byte 0x10.
+        auto header = buffer.recv_raw_buffer[0];
+        if(header != 0x10) 
+            return false;
+        ++ offset;
+        std::array<uint8_t, CIF_BYTES> cif_bytes;
+        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
+        auto beg = buffer.recv_raw_buffer.begin();
+        unsigned long long aes_decrypted_len = 0;
+        std::copy(beg + offset, beg + offset + CIF_BYTES, cif_bytes.begin());
+        offset += CIF_BYTES;
+        std::copy(beg + offset, beg + offset + crypto_aead_aes256gcm_NPUBBYTES, aes_nonce.begin());
+        offset += crypto_aead_aes256gcm_NPUBBYTES;
+
+        auto cinfo_hash = lc_utils::bytes_to_u64(cif_bytes);
+        auto ptr_session = conns.get_session(cinfo_hash);
+        if(ptr_session == nullptr)
+            return false;
+        if(ptr_session->get_status() != 2)
+            return false;
+        auto aes_key = ptr_session->get_aes_gcm_key();
+        auto sid = ptr_session->get_server_sid();
+        auto ret = 
+            (crypto_aead_aes256gcm_decrypt(
+                buffer.recv_aes_buffer.begin(), &aes_decrypted_len, NULL,
+                beg + offset, recved_raw_bytes - offset,
+                NULL, 0,
+                aes_nonce.data(), aes_key.data()
+            ) == 0);
+        buffer.recv_aes_bytes = aes_decrypted_len;
+        if(aes_decrypted_len <= SID_BYTES)
+            return false;
+        if(ret) {
+            if(std::memcmp(buffer.recv_aes_buffer.begin(), sid.begin(), sid.size())==0) {
+                ret_cif = cinfo_hash;
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+
     /* int msg_precheck(const conn_ctx& this_ctx, const std::string& buff_str, struct msg_attr& attr) {
         attr.msg_attr_reset(); // Reset all the attrbutes.
         auto is_private_msg = (std::memcmp(buff_str.c_str(), to_user, MSG_ATTR_LEN) == 0);
@@ -998,44 +1044,15 @@ public:
             if(header == 0x10) {
                 if(buffer.recv_raw_bytes <= 1 + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + crypto_aead_aes256gcm_ABYTES)
                     continue; // Empty or invalid message. Omit.
-
-                // Try to handle that.
-                auto pos = buffer.recv_raw_buffer.begin() + 1;
-                std::array<uint8_t, CIF_BYTES> cinfo_hash_bytes;
-
-                std::copy(pos, pos + CIF_BYTES, cinfo_hash_bytes.begin());
-                std::copy(pos + CIF_BYTES, pos + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES, client_aes_nonce.begin());
-
-                auto cinfo_hash = lc_utils::bytes_to_u64(cinfo_hash_bytes);
-                auto this_conn = conns.get_session(cinfo_hash);
-                if(this_conn == nullptr)
-                    continue; // Not a valid session.
-                if(this_conn->get_status() != 2)
-                    continue; // Not an activated session
-                auto aes_key = this_conn->get_aes_gcm_key();
-                auto server_sid = this_conn->get_server_sid();
-                aes_decrypted_len = 0;
-
-                auto is_msg_ok = 
-                    ((crypto_aead_aes256gcm_decrypt(
-                        buffer.recv_aes_buffer.begin(), (unsigned long long *)(&aes_decrypted_len),
-                        NULL,
-                        pos + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES, 
-                        buffer.recv_raw_bytes - 1 - CIF_BYTES - crypto_aead_aes256gcm_NPUBBYTES,
-                        NULL, 0,
-                        client_aes_nonce.data(), aes_key.data()
-                    ) == 0) && std::memcmp(buffer.recv_aes_buffer.data(), server_sid.data(), SID_BYTES) == 0);
-
-                buffer.recv_aes_bytes = aes_decrypted_len;
-                if(!is_msg_ok) {
-                    std::copy(std::begin(server_cf_siderr), std::end(server_cf_siderr), buffer.send_buffer.begin());
-                    buffer.send_bytes = ERR_CODE_BYTES + 1;
-                    simple_send(client_addr, buffer.send_buffer.data(), buffer.send_bytes);
+                uint64_t cinfo_hash;
+                if(!decrypt_recv_0x10raw_bytes(buffer.recv_raw_bytes, cinfo_hash)) {
+                    std::cout << "no!!" << std::endl;
                     continue;
                 }
+                    
                 auto msg_body = buffer.recv_aes_buffer.data() + SID_BYTES;
-                auto msg_size = aes_decrypted_len - SID_BYTES;
-                this_conn->set_src_addr(client_addr); // Update the client addr.
+                auto msg_size = buffer.recv_aes_bytes - SID_BYTES;
+                conns.get_session(cinfo_hash)->set_src_addr(client_addr); // Update the client addr.
                 if(!clients.is_valid_ctx(cinfo_hash)) 
                     clients.add_ctx(cinfo_hash);
                 auto this_client = clients.get_ctx(cinfo_hash);
