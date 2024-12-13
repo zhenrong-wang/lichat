@@ -1064,39 +1064,30 @@ public:
                     stat = this_client->get_status(); // Retrive the latest status.
                 }
                 if(stat == 1) {
-                    if(msg_size < 1 + 1 + ULOGIN_MIN_BYTES + 1 + PASSWORD_MIN_BYTES + 1)
+                    size_t min_size = 1 + 1 + ULOGIN_MIN_BYTES + 1 + PASSWORD_MIN_BYTES + 1;
+                    size_t max_size = 1 + 1 + UEMAIL_MAX_BYTES + 1 + UNAME_MAX_BYTES + 1 + PASSWORD_MAX_BYTES + 1;
+                    if(msg_size < min_size || msg_size > max_size || msg_body[0] > 0x01)
                         continue; // option + type + user_name &/user_email + '0x00' + password + 0x00
-                    if(msg_size > 1 + 1 + UEMAIL_MAX_BYTES + 1 + UNAME_MAX_BYTES + 1 + PASSWORD_MAX_BYTES + 1)
-                        continue; // invalid format - the message is too long.
                     auto option = msg_body[0];
-                    // option: 0 - signup, 1 - signin
-                    if(option != 0x00 && option != 0x01) 
-                        continue; // Invalid option
-
                     if(option == 0x00) { // Signing up.
                         if(msg_size < 1 + 1 + ULOGIN_MIN_BYTES + 1 + ULOGIN_MIN_BYTES + 1 + PASSWORD_MIN_BYTES + 1)
                             continue; // Invalid length.
-
                         auto reg_info = lc_utils::split_buffer_by_null(msg_body + 2, msg_size - 2, 3);
                         if(reg_info.size() < 3) 
                             continue; // Invalid format.
-
                         uint8_t err = 0;
                         bool is_uname_randomized = false;
                         if(!users.add_user(reg_info[0], reg_info[1], reg_info[2], err, is_uname_randomized)) {
                             simple_secure_send(0x10, cinfo_hash, &err, 1);
                             continue;
                         }
-                        if(is_uname_randomized) {
+                        if(is_uname_randomized)
                             simple_secure_send(0x10, cinfo_hash, reinterpret_cast<const uint8_t *>(reg_info[1].c_str()), reg_info[1].size());
-                        }
-                        else {
+                        else
                             simple_secure_send(0x10, cinfo_hash, ok, sizeof(ok));
-                        }
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
                         users.set_user_status(0, reg_info[0], 1);
-
                         const char msg[] = "signed up and signed in!\n";
                         broadcasting(false, reg_info[0], reinterpret_cast<const uint8_t *>(server_bcast_header), sizeof(server_bcast_header), reinterpret_cast<const uint8_t *>(msg), sizeof(msg));
                         continue;
@@ -1105,11 +1096,9 @@ public:
                     auto signin_type = msg_body[1];
                     if(signin_type != 0x00 && signin_type != 0x01) 
                         continue;
-
                     auto signin_info = lc_utils::split_buffer_by_null(msg_body + 2, msg_size - 2, 2);
                     if(signin_info.size() < 2)
                         continue;
-                    
                     uint8_t err = 0;
                     // signin_info[0]: uemail or uname, signin_info[1]: password
                     if(!users.user_pass_check(signin_type, signin_info[0], signin_info[1], err)) {
