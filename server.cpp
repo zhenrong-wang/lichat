@@ -521,6 +521,10 @@ public:
         last_error = 0;
     }
 
+    void set_port(uint16_t port) {
+        server_port = port;
+        server_addr.sin_port = htons(server_port);
+    }
     // Close server and possible FD
     bool close_server(int err) {
         last_error = err;
@@ -547,7 +551,7 @@ public:
             return close_server(3);
         if(bind(server_fd, (sockaddr *)&server_addr, (socklen_t)sizeof(server_addr)))
             return close_server(5);
-        std::cout << "UDP Chatroom Service started." << std::endl 
+        std::cout << "LightChat (LiChat) Service started." << std::endl 
                   << "UDP Listening Port: " << server_port << std::endl;
         return true;
     }
@@ -1141,6 +1145,17 @@ int main(int argc, char **argv) {
         std::cout << "Failed to init libsodium." << std::endl;
         return 1;
     }
+    uint16_t port = DEFAULT_SERVER_PORT;
+    if(argc > 1) {
+        if(lc_utils::string_to_u16(argv[1], port))
+            std::cout << "Using the specified port: " << port << std::endl;
+        else
+            std::cout << "Specified port " << argv[1] << " is invalid. Using the default 8081." << std::endl;
+    }
+    else {
+        std::cout << "No port specified, using the default 8081." << std::endl;
+    }
+    new_server.set_port(port);
     if(!new_server.start_server()) {
         std::cout << "Failed to start server. Error Code: " 
                   << new_server.get_last_error() << std::endl;
