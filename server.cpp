@@ -301,8 +301,6 @@ class user_mgr {
 public:
     user_mgr() {}
 
-    
-
     bool is_email_registered(const std::string& email) {
         return (user_db.find(email) != user_db.end());
     }
