@@ -51,11 +51,17 @@ constexpr char default_key_dir[] = "./";
 constexpr char server_bcast_header[] = "[SYSTEM_BROADCASTING]:";
 constexpr char server_internal_fatal[] = "Server internal fatal error.\n";
 constexpr char restart_handshake[] = "Session failed. Restart handshake.\n";
-constexpr char main_menu[] = "1. signup\n2. signin\nPlease choose (1 | 2) or (signup | signin): ";
-constexpr char choose_login[] = "1. email\n2. username\nPlease choose a login type (1 | 2) or (email | username): ";
+constexpr char main_menu[] = "1. signup\n2. signin\n\
+Please choose (1 | 2) or (signup | signin): ";
+constexpr char choose_login[] = "1. email\n2. username\nPlease choose a login \
+type (1 | 2) or (email | username): ";
 constexpr char input_email[] =    "E-mail: ";
-constexpr char input_username[] = "\nUsername format:\n1) 4-64 ascii chars.\n2) Only a-z A-Z 0-9 - _ are allowed.\n\nUsername: ";
-constexpr char input_password[] = "\nPassword format:\n1) 4-32 ascii chars.\n2) Must contain at least 3 types, must contain special char(s):\n   [lowercase]: a-z\n   [UPPERCASE]: A-Z\n   [#numbers#]: 0-9\n   [special_c]: ~!@#$%^&(){}[]-_=+;:,.<>/|\n\nPassword: ";
+constexpr char input_username[] = "\nUsername format:\n1) 4-64 ascii chars.\n\
+2) Only a-z A-Z 0-9 - _ are allowed.\n\nUsername: ";
+constexpr char input_password[] = "\nPassword format:\n1) 4-32 ascii chars.\n\
+2) Must contain at least 3 types, must contain special char(s):\n\
+   [lowercase]: a-z\n   [UPPERCASE]: A-Z\n   [#numbers#]: 0-9\n\
+   [special_c]: ~!@#$%^&(){}[]-_=+;:,.<>/|\n\nPassword: ";
 constexpr char option_error[] = "Option error, please input 1 or 2\n";
 constexpr char user_uid_exist[] = "User already exists.\n";
 constexpr char user_uid_error[] = "User does not exist.\n";
@@ -82,6 +88,8 @@ constexpr char cannot_at_or_to_self[] = "[SYSTEM] You cannot tag or send private
 constexpr char been_tagged[] = "[SYSTEM_NOTIFY] You've been tagged!";
 constexpr char private_msg_recved[] = "[SYSTEM_NOTIFY] You've received a private message!";
 constexpr char private_msg_sent[] = "[SYSTEM_INFO] You've sent a private message!";
+constexpr char auto_signout[] = "You've been signed in on another session. Signed out here.\n";
+constexpr char signed_in[] = " signed in!\n";
 constexpr size_t MSG_ATTR_LEN = 3;
 constexpr char to_user[MSG_ATTR_LEN] = {'~', '-', '>'};
 constexpr char tag_user[MSG_ATTR_LEN] = {'~', '-', '@'};

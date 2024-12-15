@@ -23,7 +23,8 @@ struct msg_buffer {
     std::array<uint8_t, BUFF_SIZE> send_buffer;
     ssize_t send_bytes;
 
-    msg_buffer() : recv_raw_bytes(0), recv_aes_bytes(0), send_aes_bytes(0), send_bytes(0) {}
+    msg_buffer() : recv_raw_bytes(0), recv_aes_bytes(0), send_aes_bytes(0), 
+    send_bytes(0) {}
 
     static ssize_t size_to_clear(ssize_t bytes) {
         if(bytes < 0 || bytes >= BUFF_SIZE)
