@@ -46,12 +46,7 @@ constexpr uint8_t client_ff_timout[ERR_CODE_BYTES] = {'T', 'I', 'M', 'O', 'U', '
 constexpr uint8_t client_ef_keyerr[ERR_CODE_BYTES] = {'K', 'E', 'Y', 'E', 'R', 'R'};
 constexpr uint8_t client_df_msgerr[ERR_CODE_BYTES] = {'M', 'S', 'G', 'E', 'R', 'R'};
 
-constexpr char default_server_pk[] = "./server_public_key.bin";
-constexpr char default_server_sk[] = "./server_secret_key.bin";
-
-constexpr char default_client_pk[] = "./client_public_key.bin";
-constexpr char default_client_sk[] = "./client_secret_key.bin";
-constexpr char client_side_server_pk[] = "./server_pk_local.bin";
+constexpr char default_key_dir[] = "./";
 
 constexpr char server_bcast_header[] = "[SYSTEM_BROADCASTING]:";
 constexpr char server_internal_fatal[] = "Server internal fatal error.\n";
