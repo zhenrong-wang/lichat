@@ -47,6 +47,7 @@ class session_item {
     // Received
     std::array<uint8_t, CID_BYTES> client_cid;
     std::array<uint8_t, crypto_box_PUBLICKEYBYTES> client_public_key;
+    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> client_sign_key;
 
     // Generated
     uint64_t cinfo_hash; // Will be the unique key for unordered_map.
@@ -86,21 +87,27 @@ public:
     const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& get_client_public_key() const {
         return client_public_key;
     }
+    const std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& get_client_sign_key() const {
+        return client_sign_key;
+    }
     const int& get_status() const {
         return status;
     }
-    int prepare(std::array<uint8_t, CID_BYTES>& recv_client_cid, std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& recv_client_public_key, const curve25519_key_mgr& key_mgr, bool is_precalc_hash) {
+    int prepare(std::array<uint8_t, CID_BYTES>& recv_client_cid, std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& recv_client_public_key, std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recv_client_sign_key, const key_mgr_25519& key_mgr, bool is_precalc_hash) {
         if(!key_mgr.is_activated())
             return -1;
         if(status != 0)
             return 1;
+        std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> calc_aes_key;
+        if(crypto_box_beforenm(calc_aes_key.data(), recv_client_public_key.data(), key_mgr.get_crypto_sk().data()) != 0)
+            return 3;
         client_cid = recv_client_cid;
         client_public_key = recv_client_public_key;
+        client_sign_key = recv_client_sign_key;
+        aes256gcm_key = calc_aes_key;
         if(!is_precalc_hash) 
             cinfo_hash = lc_utils::hash_client_info(recv_client_cid, recv_client_public_key);
         randombytes_buf(server_sid.data(), server_sid.size());
-        if(crypto_box_beforenm(aes256gcm_key.data(), client_public_key.data(), key_mgr.get_secret_key().data()) != 0)
-            return 3;
         status = 1;
         return 0;
     }
@@ -136,14 +143,14 @@ class session_pool {
 public:
     session_pool() : stats({0, 0, 0, 0, 0}) {};
 
-    int prepare_add_session(std::array<uint8_t, CID_BYTES>& recv_client_cid, std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& recv_client_public_key, const curve25519_key_mgr& key_mgr) {
+    int prepare_add_session(std::array<uint8_t, CID_BYTES>& recv_client_cid, std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& recv_client_public_key, std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recv_client_sign_key, const key_mgr_25519& key_mgr) {
         if(!key_mgr.is_activated())
             return -1;
         uint64_t key = lc_utils::hash_client_info(recv_client_cid, recv_client_public_key);
         if(sessions.find(key) != sessions.end())
             return 1;
         session_item session(key);
-        session.prepare(recv_client_cid, recv_client_public_key, key_mgr, true);
+        session.prepare(recv_client_cid, recv_client_public_key, recv_client_sign_key, key_mgr, true);
         sessions.insert({key, session});
         ++ stats.total;
         ++ stats.prepared;
@@ -312,26 +319,42 @@ public:
     // The suffix comes from a random 6-byte block (2 ^ 48 possibilities)
     // If the username is still duplicate after randomization, return false
     // else return true.
-    bool randomize_username(std::string& duplicate_username) {
-        uint8_t random_suffix[6];
-        char b64_cstr[12]; // 2x is large enough for base64encode.
-        // The b64_size includes a '\0' termination char.
-        size_t b64_size = sodium_base64_encoded_len(6, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
-        randombytes_buf(random_suffix, 6);
-        sodium_bin2base64(b64_cstr, b64_size, 
-            random_suffix, 6, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
-        std::string new_username;
-        if((duplicate_username.size() + 1 + b64_size) > UNAME_MAX_BYTES) {
-            auto pos = UNAME_MAX_BYTES - b64_size - 1;
-            new_username = duplicate_username.substr(0, pos) + "-" + std::string(b64_cstr);
+    bool randomize_username(std::string& uname) {
+        uint8_t random_suffix3[3], random_suffix6[6], random_suffix9[9];
+        auto check = [](std::string& str, uint8_t *bytes, size_t n) {
+            size_t b64_size = sodium_base64_encoded_len(n, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
+            std::vector<char> b64_cstr(b64_size);
+            std::string new_name;
+            randombytes_buf(bytes, n);
+            sodium_bin2base64(b64_cstr.data(), b64_size, 
+                bytes, n, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
+            if(str.size() + 1 + b64_size > UNAME_MAX_BYTES) {
+                auto pos = UNAME_MAX_BYTES - 1 - b64_size;
+                new_name = str.substr(0, pos) + "-" + std::string(b64_cstr.data());
+            }
+            else {
+                new_name = str + "-" + std::string(b64_cstr.data());
+            }
+            return new_name;
+        };
+        // First try.
+        std::string new_name;
+        new_name = check(uname, random_suffix3, sizeof(random_suffix3));
+        if(!is_username_occupied(new_name)) {
+            uname = new_name;
+            return true;
         }
-        else {
-            new_username = duplicate_username + "-" + std::string(b64_cstr);
+        new_name = check(uname, random_suffix6, sizeof(random_suffix6));
+        if(!is_username_occupied(new_name)) {
+            uname = new_name;
+            return true;
         }
-        if(is_username_occupied(new_username))
-            return false;
-        duplicate_username = new_username;
-        return true;
+        new_name = check(uname, random_suffix9, sizeof(random_suffix9));
+        if(!is_username_occupied(new_name)) {
+            uname = new_name;
+            return true;
+        }
+        return false;
     }
 
     bool is_username_occupied(const std::string& uname) {
@@ -411,6 +434,7 @@ public:
         user_db.insert({uemail, new_user});
         uname_uemail.insert({uname, uemail});
         user_list_fmt += (uname + " (" + uemail + ") " + "\n");
+        std::cout << user_list_fmt << std::endl;
         return true;
     }
 
@@ -496,8 +520,8 @@ class lichat_server {
     struct sockaddr_in server_addr;                 // socket addr
     uint16_t server_port;                           // port number
     int server_fd;                                  // generated server_fd
-    std::pair<std::string, std::string> key_paths;  // public_key secret_key
-    curve25519_key_mgr key_mgr;                     // key manager
+    std::string key_dir;                            // Key directory
+    key_mgr_25519 key_mgr;                          // key manager
     msg_buffer buffer;                              // Message core processor
     user_mgr users;                                 // all users
     session_pool conns;                             // all sessions.
@@ -512,8 +536,8 @@ public:
         server_addr.sin_family = AF_INET;
         server_addr.sin_port = htons(server_port);
         server_fd = -1;
-        key_paths = std::make_pair(default_server_pk, default_server_sk);
-        key_mgr = curve25519_key_mgr();
+        key_dir = default_key_dir;
+        key_mgr = key_mgr_25519(key_dir, "server_");
         buffer = msg_buffer();
         users = user_mgr();
         conns = session_pool();
@@ -525,6 +549,12 @@ public:
         server_port = port;
         server_addr.sin_port = htons(server_port);
     }
+
+    void set_key_dir(const std::string& dir) {
+        key_dir = default_key_dir;
+        key_mgr.set_key_dir(dir);
+    }
+
     // Close server and possible FD
     bool close_server(int err) {
         last_error = err;
@@ -542,7 +572,7 @@ public:
 
     // Start the server and handle possible failures
     bool start_server(void) {
-        if(key_mgr.key_mgr_init(key_paths.first, key_paths.second) != 0) {
+        if(key_mgr.key_mgr_init() != 0) {
             std::cout << "Key manager not activated." << std::endl;
             return close_server(1);
         }
@@ -599,27 +629,49 @@ public:
         auto cif_bytes = lc_utils::u64_to_bytes(cif);
         auto sid = conn->get_server_sid();
         auto aes_key = conn->get_aes_gcm_key();
+
+        for(size_t i = 0; i < aes_key.size(); ++ i) {
+                        printf("%x ", aes_key[i]);
+                    }
+                    printf("\n");
         auto addr = conn->get_src_addr();
         // Padding the first byte
         buffer.send_buffer[0] = header;
         ++ offset;
         
         if(header == 0x00) {
-            auto server_public_key = key_mgr.get_public_key();
-            std::copy(server_public_key.begin(), server_public_key.end(), buffer.send_buffer.begin() + offset);
-            offset += server_public_key.size();
+            // server_sign_key + signed(server_publick_key)
+            std::array<uint8_t, crypto_sign_BYTES + crypto_box_PUBLICKEYBYTES> signed_server_cpk;
+            if(!lc_utils::sign_crypto_pk(key_mgr, signed_server_cpk)) {
+                buffer.send_bytes = offset;
+                return 1;
+            }
+            auto server_sign_pk = key_mgr.get_sign_pk();
+            std::copy(server_sign_pk.begin(), server_sign_pk.end(), buffer.send_buffer.begin() + offset);
+            offset += server_sign_pk.size();
+            std::copy(signed_server_cpk.begin(), signed_server_cpk.end(), buffer.send_buffer.begin() + offset);
+            offset += signed_server_cpk.size();
+        }
+        else if(header == 0x01) { // Verify the signature.
+            unsigned long long signed_len = 0;
+            auto sign_sk = key_mgr.get_sign_sk();
+            std::array<uint8_t, crypto_sign_BYTES + sizeof(ok)> signed_ok;
+            if(crypto_sign(signed_ok.data(), &signed_len, ok, sizeof(ok), sign_sk.data()) != 0) {
+                buffer.send_bytes = offset;
+                return 1;
+            }
+            std::copy(signed_ok.begin(), signed_ok.end(), buffer.send_buffer.begin() + offset);
+            offset += signed_ok.size();
         }
     
         // Padding the aes_nonce
         lc_utils::generate_aes_nonce(server_aes_nonce);
         std::copy(server_aes_nonce.begin(), server_aes_nonce.end(), buffer.send_buffer.begin() + offset);
         offset += server_aes_nonce.size();
-
         if((offset + sid.size() + cif_bytes.size() + raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_SIZE) {
             buffer.send_bytes = offset;
-            return -1; // buffer overflow occur.
+            return 3; // buffer overflow occur.
         }
-
         // Construct the raw message: sid + cif + msg_body
         std::copy(sid.begin(), sid.end(), buffer.send_aes_buffer.begin());
         std::copy(cif_bytes.begin(), cif_bytes.end(), buffer.send_aes_buffer.begin() + sid.size());
@@ -638,10 +690,10 @@ public:
         );
         buffer.send_bytes = offset + aes_encrypted_len;
         if(res != 0) 
-            return -3;
+            return 5;
         auto ret = simple_send(addr, buffer.send_buffer.data(), buffer.send_bytes);
         if(ret < 0) 
-            return -5;
+            return 7;
         return ret;
     }
 
@@ -897,16 +949,30 @@ public:
     }
 
     bool is_valid_clnt_err_msg(const uint8_t *clnt_err_code, uint64_t& cinfo_hash) {
-        if(buffer.recv_raw_bytes != 1 + ERR_CODE_BYTES + CID_BYTES + crypto_box_PUBLICKEYBYTES)
+        size_t expected_bytes = 1 + ERR_CODE_BYTES + 
+                                crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES + 
+                                CID_BYTES + crypto_box_PUBLICKEYBYTES;
+        if(buffer.recv_raw_bytes != expected_bytes)
             return false;
-        auto err_start = buffer.recv_raw_buffer.data() + 1;
-        if(std::memcmp(err_start, clnt_err_code, ERR_CODE_BYTES) != 0)
+        size_t offset = 0;
+        auto beg = buffer.recv_raw_buffer.begin();
+        ++ offset;
+        if(std::memcmp(beg + offset, clnt_err_code, ERR_CODE_BYTES) != 0)
             return false; // Garbage message, ommit.
-        auto pos = buffer.recv_raw_buffer.begin() + 1 + ERR_CODE_BYTES;
+        offset += ERR_CODE_BYTES;
+        unsigned long long unsign_len = 0;
+        std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> client_sign_pk;
+        std::copy(beg + offset, beg + offset + crypto_sign_PUBLICKEYBYTES, client_sign_pk.begin());
+        offset += crypto_sign_PUBLICKEYBYTES;
+        if(crypto_sign_open(nullptr, &unsign_len, beg + offset, 
+            crypto_sign_BYTES + CID_BYTES + crypto_box_PUBLICKEYBYTES, client_sign_pk.data()) != 0)
+            return false; // Unsigned message. ommit.
+        offset += crypto_sign_BYTES;
         std::array<uint8_t, CID_BYTES> cid;
         std::array<uint8_t, crypto_box_PUBLICKEYBYTES> cpk;
-        std::copy(pos, pos + CID_BYTES, cid.begin());
-        std::copy(pos + CID_BYTES, pos + CID_BYTES + crypto_box_PUBLICKEYBYTES, cpk.begin());
+        std::copy(beg + offset, beg + offset + CID_BYTES, cid.begin());
+        offset += CID_BYTES;
+        std::copy(beg + offset, beg + offset + crypto_box_PUBLICKEYBYTES, cpk.begin());
         uint64_t hash = lc_utils::hash_client_info(cid, cpk);
         if(is_session_valid(hash)) {
             cinfo_hash = hash;
@@ -926,7 +992,9 @@ public:
             return 3;
         }
         
-        auto server_public_key = key_mgr.get_public_key();
+        //auto server_public_key = key_mgr.get_crypto_pk();
+        //auto server_sign_key = key_mgr.get_sign_pk();
+
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
         size_t aes_encrypted_len = 0;
         size_t aes_decrypted_len = 0;
@@ -948,22 +1016,36 @@ public:
                 std::cout << (int)buffer.recv_raw_buffer[i] << ' ';
             }
             std::cout << std::dec << bytes_recv << std::endl;
-            
+            auto beg = buffer.recv_raw_buffer.begin();
+            size_t offset = 0;
             auto header = buffer.recv_raw_buffer[0];
+            ++ offset;
             if(header == 0x00 || header == 0x01) {
-                if(buffer.recv_raw_bytes != 1 + CID_BYTES + crypto_box_PUBLICKEYBYTES) {
+                if(buffer.recv_raw_bytes != 1 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES + CID_BYTES + crypto_box_PUBLICKEYBYTES) {
                     simple_send(client_addr, server_ff_failed, sizeof(server_ff_failed));
                     continue;
                 }
-                auto pos = buffer.recv_raw_buffer.begin() + 1;
+
+                // 0x00/0x01 + client_sign_key + signed (CID + client_pub_key);
+                unsigned long long sign_check_len;
+                std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> spk;
+                std::copy(beg + offset, beg + offset + crypto_sign_PUBLICKEYBYTES, spk.begin());
+                offset += crypto_sign_PUBLICKEYBYTES;
+                if(crypto_sign_open(nullptr, &sign_check_len, beg + offset, buffer.recv_raw_bytes - offset, spk.data()) != 0) {
+                    simple_send(client_addr, server_ff_failed, sizeof(server_ff_failed));
+                    continue;
+                }
+                offset += crypto_sign_BYTES;
                 std::array<uint8_t, CID_BYTES> cid;
                 std::array<uint8_t, crypto_box_PUBLICKEYBYTES> cpk;
-                std::copy(pos, pos + CID_BYTES, cid.begin());
-                std::copy(pos + CID_BYTES,pos + CID_BYTES + crypto_box_PUBLICKEYBYTES, cpk.begin());
+                std::copy(beg + offset, beg + offset + CID_BYTES, cid.begin());
+                offset += CID_BYTES;
+                std::copy(beg + offset, beg + offset + crypto_box_PUBLICKEYBYTES, cpk.begin());
+                offset += crypto_box_PUBLICKEYBYTES;
                 uint64_t cinfo_hash = lc_utils::hash_client_info(cid, cpk);
                 if(conns.get_session(cinfo_hash) != nullptr)
                     continue; // If the session has been established, ommit.
-                conns.prepare_add_session(cid, cpk, key_mgr);
+                conns.prepare_add_session(cid, cpk, spk, key_mgr);
                 auto this_conn = conns.get_session(cinfo_hash);
                 if(this_conn == nullptr) {
                     simple_send(client_addr, (const uint8_t *)server_internal_fatal, sizeof(server_internal_fatal));
@@ -992,7 +1074,6 @@ public:
                 }
                 if(conns.get_session(cinfo_hash)->get_status() != 1)
                     continue;
-                simple_send(client_addr, (const uint8_t *)restart_handshake, sizeof(restart_handshake));
                 conns.delete_session(cinfo_hash);
                 continue;
             }
@@ -1033,16 +1114,41 @@ public:
                     simple_secure_send(0x02, cinfo_hash, ok, sizeof(ok));
                     continue;
                 }
+                offset = 0;
+                auto beg = buffer.send_buffer.begin();
+                // 1 + 6-byte err + CIF + deleted_sid + server_sign_pk + signed(server_cpk)
                 if(!is_aes_ok) 
-                    std::copy(std::begin(server_ef_keyerr), std::end(server_ef_keyerr), buffer.send_buffer.begin());
+                    std::copy(std::begin(server_ef_keyerr), std::end(server_ef_keyerr), beg + offset);
                 else
-                    std::copy(std::begin(server_df_msgerr), std::end(server_df_msgerr), buffer.send_buffer.begin());
-                std::copy(cinfo_hash_bytes.begin(), cinfo_hash_bytes.end(),  buffer.send_buffer.begin() + ERR_CODE_BYTES + 1);
-                std::copy(server_public_key.begin(), server_public_key.end(), buffer.send_buffer.begin() + ERR_CODE_BYTES + 1 + cinfo_hash_bytes.size());
-                buffer.send_bytes = ERR_CODE_BYTES + 1 + cinfo_hash_bytes.size(), server_public_key.size();
+                    std::copy(std::begin(server_df_msgerr), std::end(server_df_msgerr), beg + offset);
+                offset += 1 + ERR_CODE_BYTES;
+
+                // Copy cinfo_hash
+                std::copy(cinfo_hash_bytes.begin(), cinfo_hash_bytes.end(),  beg + offset);
+                offset += cinfo_hash_bytes.size();
+
+                // Copy server_sid
+                std::copy(server_sid.begin(), server_sid.end(), beg + offset);
+                offset += server_sid.size();
+
+                // Copy server_sign_pk
+                auto server_spk = key_mgr.get_sign_pk();
+                std::copy(server_spk.begin(), server_spk.end(), beg + offset);
+                offset += server_spk.size();
+
+                // Sign the server_crypto_pk and copy
+                std::array<uint8_t, crypto_sign_BYTES + crypto_box_PUBLICKEYBYTES> signed_server_cpk;
+                lc_utils::sign_crypto_pk(key_mgr, signed_server_cpk);
+                std::copy(signed_server_cpk.begin(), signed_server_cpk.end(), beg + offset);
+                
+                // Calc the total bytes.
+                buffer.send_bytes = offset + signed_server_cpk.size();
+
+                // Send out the message.
                 simple_send(client_addr, buffer.send_buffer.data(), buffer.send_bytes);
-                simple_send(client_addr, (const uint8_t *)restart_handshake, sizeof(restart_handshake));
-                conns.delete_session(cinfo_hash);
+
+                // Delete the session because sid has been exposed.
+                conns.delete_session(cinfo_hash); 
                 continue;
             }
             if(header == 0x10) {
@@ -1052,8 +1158,7 @@ public:
                 if(!decrypt_recv_0x10raw_bytes(buffer.recv_raw_bytes, cinfo_hash)) {
                     std::cout << "no!!" << std::endl;
                     continue;
-                }
-                    
+                }   
                 auto msg_body = buffer.recv_aes_buffer.data() + SID_BYTES;
                 auto msg_size = buffer.recv_aes_bytes - SID_BYTES;
                 conns.get_session(cinfo_hash)->set_src_addr(client_addr); // Update the client addr.

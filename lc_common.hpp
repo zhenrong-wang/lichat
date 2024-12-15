@@ -1,12 +1,14 @@
 #ifndef LC_COMMON_H
 #define LC_COMMON_H
 
+#include <iostream>
 #include <regex>
 #include <array>
 #include <vector>
 #include <cstring>
 #include "sodium.h"
 #include "lc_consts.hpp"
+#include "lc_keymgr.hpp"
 #include <iostream>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -164,6 +166,25 @@ namespace lc_utils {
         inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), first_ipv4_addr.size());
         freeaddrinfo(res);
         return true;
+    }
+
+    bool sign_crypto_pk(const key_mgr_25519& key_mgr, std::array<uint8_t, crypto_sign_BYTES + crypto_box_PUBLICKEYBYTES>& signed_cpk) {
+        if(!key_mgr.is_activated())
+            return false;
+        auto sign_pk = key_mgr.get_sign_pk();
+        auto crypto_pk = key_mgr.get_crypto_pk();
+        auto sign_sk = key_mgr.get_sign_sk();
+        unsigned long long signed_len;
+        if(crypto_sign(signed_cpk.data(), &signed_len, crypto_pk.data(), crypto_pk.size(), sign_sk.data()) != 0)
+            return false;
+        return true;
+    }
+
+    void print_array(const uint8_t *arr, const size_t n) {
+        printf("\n");
+        for(size_t i = 0; i < n; ++ i) 
+            printf("%x ", arr[i]);
+        printf("\n %lu \n", n);
     }
 }
 
