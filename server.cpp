@@ -150,7 +150,7 @@ class session_pool {
         std::array<uint8_t, 8> hash_key;
         randombytes_buf(hash_key.data(), hash_key.size());
         uint64_t ret = 0;
-        for(uint8_t i = 0; i < 8; ++ i)
+        for (uint8_t i = 0; i < 8; ++ i)
             ret |= (static_cast<uint64_t>(hash_key[i]) << (i * 8));
         return ret;
     }
@@ -282,7 +282,7 @@ public:
     }
     bool clear_ctx_by_uid (const uint64_t& this_cif, const std::string& uid, 
         uint64_t& cif) {
-        for(auto& elem : contexts) {
+        for (auto& elem : contexts) {
             if (elem.second.get_bind_uid() == uid && elem.first != this_cif) {
                 elem.second.clear_ctx();
                 cif = elem.first;
@@ -514,7 +514,7 @@ public:
         if (!show_status)
             return get_user_list();
         std::string list_with_status;
-        for(auto& it : user_db) {
+        for (auto& it : user_db) {
             if (it.second.user_status == 1)
                 list_with_status += (it.second.unique_name + " (" 
                                     + it.second.unique_email +  ") (in)\n");
@@ -543,7 +543,7 @@ public:
 
     std::pair<size_t, size_t> get_user_stat () {
         size_t in = 0;
-        for(auto& it : user_db) {
+        for (auto& it : user_db) {
             if (it.second.user_status == 1)
                 ++ in;
         }
@@ -793,7 +793,7 @@ public:
 
     bool get_cinfo_by_uid (uint64_t& ret, const std::string& user_uid) {
         auto map = clients.get_ctx_map();
-        for(auto it : map) {
+        for (auto it : map) {
             if (it.second.get_bind_uid() == user_uid) {
                 ret = it.first; 
                 return true;
@@ -821,7 +821,7 @@ public:
             return 0;
         buffer.send_bytes = 1 + signed_len;
         size_t sent_out = 0;
-        for(auto elem : clients.get_ctx_map()) {
+        for (auto elem : clients.get_ctx_map()) {
             if (elem.second.get_status() != 2)
                 continue;
             auto cif = elem.first;
@@ -842,7 +842,7 @@ public:
         if (lc_utils::calc_encrypted_len(msg_bytes) > BUFF_SIZE)
             return 0;
         size_t sent_out = 0;
-        for(auto elem : clients.get_ctx_map()) {
+        for (auto elem : clients.get_ctx_map()) {
             if (elem.second.get_status() != 2)
                 continue;
             auto cif = elem.first;
@@ -1063,7 +1063,7 @@ public:
             std::cout << std::endl << std::hex << std::setw(2) 
                       << std::setfill('0');
             
-            for(size_t i = 0; i < bytes_recv; ++ i) {
+            for (size_t i = 0; i < bytes_recv; ++ i) {
                 std::cout << (int)buffer.recv_raw_buffer[i] << ' ';
             }
 
@@ -1360,6 +1360,7 @@ public:
                                 bcast_msg.size());
                     continue;
                 }
+                secure_broadcasting(msg_body, msg_size);
             }
         }
     }

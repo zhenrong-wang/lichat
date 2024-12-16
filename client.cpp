@@ -24,13 +24,19 @@
 #include <functional>
 #include <fcntl.h>
 #include <errno.h>
+#include <mutex>
 
 constexpr char welcome[] = "\nWelcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
-constexpr char prompt[] = "Enter Your message: ";
 
-std::atomic<bool> tui_running;
+constexpr char prompt[] = "Enter your input: ";
+
+std::atomic<bool> tui_running(false);
+std::atomic<bool> send_msg_req(false);
+
+std::string send_msg_body;
+std::mutex mtx;
 
 enum client_errors {
     NORMAL_RETURN = 0,
@@ -44,6 +50,17 @@ enum client_errors {
     WINDOW_CREATION_FAILED,
     TEXT_UI_ERROR,
     HASH_PASSWORD_FAILED,
+};
+
+struct input_buffer {
+    std::array<char, INPUT_BUFF_SIZE> ibuf;
+    size_t bytes;
+    
+    input_buffer () : bytes(0) {}
+    void clear () {
+        std::memset (ibuf.data(), 0, bytes);
+        bytes = 0;
+    }
 };
 
 class curr_user {
@@ -289,6 +306,7 @@ class lichat_client {
     client_session session;
     key_mgr_25519 client_key;
     msg_buffer buffer;
+    input_buffer input;
     std::vector<std::string> messages;
     curr_user user;
     int last_error;
@@ -298,8 +316,8 @@ public:
     lichat_client () : 
         client_fd(-1), server_pk_mgr(client_server_pk_mgr()), 
         key_dir(default_key_dir), session(client_session()), 
-        client_key(key_mgr_25519(key_dir, "client_")), 
-        buffer(msg_buffer()), user(curr_user()), last_error(0) {
+        client_key(key_mgr_25519(key_dir, "client_")), buffer(msg_buffer()), 
+        input(input_buffer()), user(curr_user()), last_error(0) {
 
         server_port = DEFAULT_SERVER_PORT;
         server_addr.sin_addr.s_addr = inet_addr(DEFAULT_SERVER_ADDR);
@@ -361,10 +379,87 @@ public:
 
     static void wprint_array(WINDOW *win, const uint8_t *arr, const size_t n) {
         wprintw(win, "\n");
-        for(size_t i = 0; i < n; ++ i) 
+        for (size_t i = 0; i < n; ++ i) 
             wprintw(win, "%x ", arr[i]);
         wprintw(win, "\n");
         wrefresh(win);
+    }
+
+    static int simple_send_stc (const int fd, const client_session& curr_s, 
+        const uint8_t *buf, size_t n) {
+        auto addr = curr_s.get_src_addr();
+        return sendto(fd, buf, n, 0, (const struct sockaddr*)(&addr), 
+                      sizeof(addr));
+    }
+    // Simplify the socket send function.
+    // Format : 1-byte header + 
+    //          cinfo_hash +
+    //          aes_nonce + 
+    //          aes_gcm_encrypted (sid + msg_body)
+    static int simple_secure_send_stc (const int fd, const uint8_t header, 
+        const client_session& curr_s, msg_buffer& buff,
+        const uint8_t *raw_msg, size_t raw_n) {
+            
+        if (curr_s.get_status() == 0 || curr_s.get_status() == 1) 
+            return -1;
+
+        if ((1 + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
+            raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_SIZE) 
+            return -3;
+
+        auto aes_key = curr_s.get_aes256gcm_key();
+        auto cif = curr_s.get_cinfo_hash();
+        auto cif_bytes = lc_utils::u64_to_bytes(cif);
+        auto sid = curr_s.get_server_sid();
+
+        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
+        size_t offset = 0, aes_encrypted_len = 0;
+
+        // Padding the first byte
+        buff.send_buffer[0] = header;
+        ++ offset;
+        
+        // Padding the cinfo_hash
+        std::copy(cif_bytes.begin(), cif_bytes.end(), 
+                    buff.send_buffer.begin() + offset);
+        offset += cif_bytes.size();
+
+        // Padding the aes_nonce
+        lc_utils::generate_aes_nonce(client_aes_nonce);
+        std::copy(client_aes_nonce.begin(), client_aes_nonce.end(), 
+                    buff.send_buffer.begin() + offset);
+        offset += client_aes_nonce.size();
+
+        if ((offset + sid.size() + raw_n + crypto_aead_aes256gcm_ABYTES) > 
+            BUFF_SIZE) {
+            buff.send_bytes = offset;
+            return -3; // buffer overflow occur.
+        }
+
+        // Construct the raw message: sid + cif + msg_body
+        std::copy(sid.begin(), sid.end(), buff.send_aes_buffer.begin());
+        std::copy(raw_msg, raw_msg + raw_n, 
+                    buff.send_aes_buffer.begin() + sid.size());
+        // Record the buffer occupied size.
+        buff.send_aes_bytes = sid.size() + raw_n;
+
+        // AES encrypt and padding to the send_buffer.
+        auto res = crypto_aead_aes256gcm_encrypt(
+            buff.send_buffer.data() + offset, 
+            (unsigned long long *)&aes_encrypted_len,
+            (const uint8_t *)buff.send_aes_buffer.data(),
+            buff.send_aes_bytes, 
+            NULL, 0, NULL, 
+            client_aes_nonce.data(), aes_key.data()
+        );
+        buff.send_bytes = offset + aes_encrypted_len;
+        if (res != 0) 
+            return -5;
+        auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), 
+                                   buff.send_bytes);
+        if (ret < 0) 
+            return -7;
+        return ret;
     }
 
     static void thread_run_tui (WINDOW *top_win, WINDOW *side_win, const int fd, 
@@ -391,10 +486,10 @@ public:
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
 
-        wmove(top_win, getcury(top_win) + 1, 0);
-        wprintw(top_win, "[SYSTEM] Your unique email: %s\n", 
+        wmove(top_win, getcury(top_win), 0);
+        wprintw(top_win, "    \n[SYSTEM] Your unique email: %s\n", 
                 u.get_uemail().c_str());     
-        wprintw(top_win, "[SYSTEM] Your unique username: %s\n", 
+        wprintw(top_win, "[SYSTEM] Your unique username: %s\n\n", 
                 u.get_uname().c_str()); 
         wrefresh(top_win);
 
@@ -405,12 +500,20 @@ public:
             errno = 0;
             is_msg_recved = false;
             if (bytes < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                if (!errno || errno == EWOULDBLOCK || errno == EAGAIN) {
+                    if (send_msg_req && send_msg_body.size() > 0) {
+                        mtx.lock();
+                        simple_secure_send_stc(fd, 0x10, s, buff, 
+                            (const uint8_t *)send_msg_body.c_str(), 
+                            send_msg_body.size());
+                        mtx.unlock();
+                    }
+                    if(send_msg_req) 
+                        send_msg_req.store(false);
                     continue;
-                else {
-                    thread_err = 3;
-                    return;
                 }
+                thread_err = 3;
+                return;
             }
             if (bytes < CLIENT_RECV_MIN_BYTES) 
                 continue;
@@ -463,11 +566,85 @@ public:
                 is_msg_recved = true;
             }
             if (is_msg_recved) {
-                wmove(top_win, getcury(top_win) + 1, 0);
-                wprintw(top_win, "%s\n", msg_vec.back().c_str());
+                wmove(top_win, getcury(top_win), 0);
+                wprintw(top_win, "    \n%s\n\n", msg_vec.back().c_str());
                 wrefresh(top_win);
             }
         }
+    }
+
+    static int print_self_msg (WINDOW *win, const input_buffer& input) {
+        if (win == nullptr)
+            return -1;
+        if (input.bytes == 0 || input.bytes >= input.ibuf.size())
+            return 1;
+        int height = 0, width = 0, pos = 0;
+        getmaxyx(win, height, width);
+        int col_start = (width < 2) ? 0 : (width / 2);
+        int line_len = width - col_start;
+        int space_len_fixed = col_start;
+
+        const std::string prefix(space_len_fixed, ' ');
+        const std::string you("You:");
+
+        std::string str = prefix;
+        str += std::string(line_len - you.size(), ' ') + you;
+        size_t lines = (input.bytes % line_len == 0) ? (input.bytes / line_len)
+                       : (input.bytes / line_len + 1);
+        
+        // If only single line, align to the right side.
+        if (lines == 1) {
+            str += prefix;
+            str += (std::string(line_len - input.bytes, ' ') + 
+                    std::string(input.ibuf.data(), input.bytes));
+        }
+        else {
+            for (size_t i = 0; i < lines - 1; ++ i) {
+                str += prefix;
+                str += (std::string(input.ibuf.data() + pos, line_len));
+                pos += line_len;
+            }
+            str += prefix;
+            str += (std::string(input.ibuf.data() + pos, input.bytes - pos)
+                    + std::string(line_len - (input.bytes - pos), ' '));
+        }
+        
+        wmove(win, getcury(win), 0);
+        wprintw(win, "%s\n", str.c_str());
+        wrefresh(win);
+        return 0;
+    }
+
+    // Refresh the input window
+    bool refresh_input_win (WINDOW *win, const char& ch) {
+        if (win == nullptr)
+            return false;
+        wprintw(win, "%c", ch);
+        wrefresh(win);
+        return true;
+    }
+
+    bool reset_input_win (WINDOW *win, const char *prompt) {
+        if (win == nullptr)
+            return false;
+        wclear(win);
+        if (prompt)
+            wprintw(win, prompt);
+        wrefresh(win);
+        return true;
+    }
+
+    bool refresh_input_win (WINDOW *win, const char *prompt, 
+        const input_buffer& input) {
+
+        if(win == nullptr)
+            return false;
+        wclear(win);
+        if(prompt)
+            wprintw(win, prompt);
+        wprintw(win, input.ibuf.data());
+        wrefresh(win);
+        return true;
     }
 
     // Close server and possible FD
@@ -1026,7 +1203,7 @@ public:
                 auto uinfo_res = lc_utils::split_buffer(
                     msg_body + 1, msg_size - 1, msg_body[0], 3
                 );
-                if(uinfo_res.size() != 2)
+                if (uinfo_res.size() != 2)
                     continue;
                 std::cout << "Auth succeeded by the server." << std::endl;
                 session.auth_ok();
@@ -1146,14 +1323,45 @@ public:
         wprintw(side_win, "Users: \n");
         wrefresh(side_win);
 
-        tui_running = true;
+        tui_running.store(true);
         int thread_err = 0;
         std::thread tui(std::bind(thread_run_tui, top_win, side_win, 
             client_fd, buffer, session, server_pk_mgr, user, messages, 
             thread_err));
 
-        wgetch(bottom_win);
-
+        while (true) {
+            int ch = wgetch(bottom_win);
+            if (ch == '\n' || input.bytes == input.ibuf.size() - 1) {
+                if (input.bytes == 0) 
+                    continue;
+                if (input.bytes == 2 && 
+                    std::strcmp(input.ibuf.data(), "q!") == 0) {
+                    tui_running.store(false);
+                    break;
+                }
+                mtx.lock();
+                send_msg_body = std::string(input.ibuf.data(), input.bytes);
+                mtx.unlock();
+                send_msg_req.store(true);
+                reset_input_win(bottom_win, prompt);
+                input.clear();
+                continue;
+            }
+            if (ch != '\n' && (isprint(ch) || ch == '\t')) {
+                input.ibuf[input.bytes] = ch;
+                ++ input.bytes;
+                refresh_input_win(bottom_win, ch);
+                continue;
+            }
+            if (ch == KEY_BACKSPACE) {
+                if (input.bytes > 0) {
+                    -- input.bytes;
+                    input.ibuf[input.bytes] = '\0';
+                }
+                refresh_input_win(bottom_win, prompt, input);
+                continue;
+            }
+        }
         tui.join();
         delwin(top_win);
         delwin(bottom_win);

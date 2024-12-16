@@ -18,7 +18,10 @@ constexpr size_t PASSWORD_MIN_BYTES = 4;
 
 constexpr char DEFAULT_SERVER_ADDR[] = "127.0.0.1";
 constexpr uint16_t DEFAULT_SERVER_PORT = 8081;
+
 constexpr size_t BUFF_SIZE = 4096;
+constexpr size_t INPUT_BUFF_SIZE = BUFF_SIZE - 128;
+
 constexpr size_t ERR_CODE_BYTES = 6;
 
 constexpr size_t SERVER_RECV_MIN_BYTES = 1 + CID_BYTES + crypto_box_PUBLICKEYBYTES;
