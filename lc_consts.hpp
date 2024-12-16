@@ -88,11 +88,16 @@ constexpr char cannot_at_or_to_self[] = "[SYSTEM] You cannot tag or send private
 constexpr char been_tagged[] = "[SYSTEM_NOTIFY] You've been tagged!";
 constexpr char private_msg_recved[] = "[SYSTEM_NOTIFY] You've received a private message!";
 constexpr char private_msg_sent[] = "[SYSTEM_INFO] You've sent a private message!";
-constexpr char auto_signout[] = "You've been signed in on another session. Signed out here.\n";
-constexpr char signed_in[] = " signed in!\n";
+constexpr char auto_signout[] = "You've been signed in on another session. Signed out here.";
+constexpr char signed_in[] = " signed in!";
 constexpr size_t MSG_ATTR_LEN = 3;
 constexpr char to_user[MSG_ATTR_LEN] = {'~', '-', '>'};
 constexpr char tag_user[MSG_ATTR_LEN] = {'~', '-', '@'};
 constexpr char user_delim = ':';
+
+constexpr size_t WIN_HEIGHT_MIN = 16;
+constexpr size_t WIN_WIDTH_MIN = 32;
+constexpr size_t SIDE_WIN_WIDTH = 16;
+constexpr size_t BOTTOM_HEIGHT = 8;
 
 #endif

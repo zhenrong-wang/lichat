@@ -20,6 +20,7 @@
 #include <sstream>      // For stringstream
 #include <unordered_map>
 #include <chrono>
+#include <thread>
 #include <ctime>
 #include <fstream>
 #include <regex>
@@ -109,7 +110,8 @@ public:
         if (status != 0)
             return 1;
         std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> calc_aes_key;
-        if (crypto_box_beforenm(calc_aes_key.data(), recv_client_public_key.data(), 
+        if (crypto_box_beforenm(calc_aes_key.data(), 
+            recv_client_public_key.data(), 
             key_mgr.get_crypto_sk().data()) != 0)
             return 3;
 
@@ -119,7 +121,7 @@ public:
         aes256gcm_key = calc_aes_key;
         if (!is_precalc_hash) 
             cinfo_hash = lc_utils::hash_client_info(recv_client_cid, 
-                            recv_client_public_key);
+                         recv_client_public_key);
         randombytes_buf(server_sid.data(), server_sid.size());
         status = 1;
         return 0;
@@ -278,9 +280,10 @@ public:
     bool is_valid_ctx (uint64_t& key) {
         return (contexts.find(key) != contexts.end());
     }
-    bool clear_ctx_by_uid (const std::string& uid, uint64_t& cif) {
+    bool clear_ctx_by_uid (const uint64_t& this_cif, const std::string& uid, 
+        uint64_t& cif) {
         for(auto& elem : contexts) {
-            if (elem.second.get_bind_uid() == uid) {
+            if (elem.second.get_bind_uid() == uid && elem.first != this_cif) {
                 elem.second.clear_ctx();
                 cif = elem.first;
                 return true;
@@ -442,7 +445,7 @@ public:
             return false;
         }
         std::array<char, crypto_pwhash_STRBYTES> hashed_pass;
-        if (!lc_utils::pass_hash(user_password, hashed_pass)) {
+        if (!lc_utils::pass_hash_secure(user_password, hashed_pass)) {
             err = 9;
             return false;
         }
@@ -671,11 +674,6 @@ public:
         auto cif_bytes = lc_utils::u64_to_bytes(cif);
         auto sid = conn->get_server_sid();
         auto aes_key = conn->get_aes_gcm_key();
-
-        for(size_t i = 0; i < aes_key.size(); ++ i) {
-                        printf("%x ", aes_key[i]);
-                    }
-                    printf("\n");
         auto addr = conn->get_src_addr();
         // Padding the first byte
         buffer.send_buffer[0] = header;
@@ -810,39 +808,21 @@ public:
         return get_cinfo_by_uid(tmp, user_uid);
     }
 
-    size_t broadcasting (bool include_self, const std::string& uemail, 
-        const uint8_t *header, const size_t header_bytes, 
-        const uint8_t *msg, const size_t msg_bytes) {
-
-        auto ptr_uname = users.get_uname_by_uemail(uemail);
-        if (ptr_uname == nullptr)
-            return 0; // Not quite possible
-        if (1 + header_bytes + 1 + ptr_uname->size() + 1 + msg_bytes > BUFF_SIZE)
+    size_t broadcasting (const uint8_t *msg, const size_t msg_bytes) {
+        if (1 + crypto_sign_BYTES + msg_bytes > BUFF_SIZE)
             return 0;
         size_t offset = 0;
         buffer.send_buffer[0] = 0x11;   // Unencrypted message.
         ++ offset;
-        if (header != nullptr && header_bytes > 0) {
-            std::copy(header, header + header_bytes, 
-                        buffer.send_buffer.begin() + offset);
-            offset += header_bytes;
-        }
-        buffer.send_buffer[offset] = ' '; // space uname space
-        ++ offset;
-        std::copy(ptr_uname->c_str(), ptr_uname->c_str() + ptr_uname->size(), 
-                    buffer.send_buffer.begin() + offset);
-
-        offset += ptr_uname->size();
-        buffer.send_buffer[offset] = ' ';
-        ++ offset;
-        std::copy(msg, msg + msg_bytes, buffer.send_buffer.begin() + offset);
-        buffer.send_bytes = offset + msg_bytes;
-
+        auto server_ssk = key_mgr.get_sign_sk();
+        unsigned long long signed_len = 0;
+        if (crypto_sign(buffer.send_buffer.data() + 1, &signed_len, msg, msg_bytes, 
+            server_ssk.data()) != 0)
+            return 0;
+        buffer.send_bytes = 1 + signed_len;
         size_t sent_out = 0;
         for(auto elem : clients.get_ctx_map()) {
             if (elem.second.get_status() != 2)
-                continue;
-            if (elem.second.get_bind_uid() == uemail && !include_self)
                 continue;
             auto cif = elem.first;
             session_item *ptr_session = conns.get_session(cif);
@@ -858,39 +838,18 @@ public:
     }
     
     // Broadcasting to all connected clients (include or exclude current/self).
-    size_t secure_broadcasting (bool include_self, std::string uemail, 
-        const uint8_t *header, const size_t header_bytes, 
-        const uint8_t *raw_msg, 
-        const size_t msg_raw_bytes) {
-
-        auto ptr_uname = users.get_uname_by_uemail(uemail);
-        if (ptr_uname == nullptr)
+    size_t secure_broadcasting (const uint8_t *msg, const size_t msg_bytes) {
+        if (lc_utils::calc_encrypted_len(msg_bytes) > BUFF_SIZE)
             return 0;
-        // header + space + uname + space + msg 
-        size_t raw_bytes = header_bytes + 1 + ptr_uname->size() + 
-                           1 + msg_raw_bytes;     
-        if (lc_utils::calc_encrypted_len(raw_bytes) > BUFF_SIZE)
-            return 0;
-        std::vector<uint8_t> msg(raw_bytes);
-        if (header != nullptr && header_bytes != 0)
-            std::copy(header, header + header_bytes, msg.begin());
-
-        msg.push_back(' ');
-        msg.assign(ptr_uname->begin(), ptr_uname->end());
-        msg.push_back(' ');
-        std::copy(raw_msg, raw_msg + msg_raw_bytes, 
-                    msg.begin() + header_bytes + 1 + ptr_uname->size() + 1);
         size_t sent_out = 0;
         for(auto elem : clients.get_ctx_map()) {
             if (elem.second.get_status() != 2)
-                continue;
-            if (elem.second.get_bind_uid() == uemail && !include_self)
                 continue;
             auto cif = elem.first;
             session_item *ptr_session = conns.get_session(cif);
             if (ptr_session == nullptr)
                 continue;
-            if (simple_secure_send(0x10, cif, msg.data(), raw_bytes) >= 0)
+            if (simple_secure_send(0x10, cif, msg, msg_bytes) >= 0)
                 ++ sent_out;
         }
         return sent_out;
@@ -1318,8 +1277,8 @@ public:
                             ULOGIN_MIN_BYTES + 1 + PASSWORD_MIN_BYTES + 1)
                             continue; // Invalid length.
 
-                        auto reg_info = lc_utils::split_buffer_by_null(
-                            msg_body + 2, msg_size - 2, 3);
+                        auto reg_info = lc_utils::split_buffer(
+                            msg_body + 2, msg_size - 2, 0x00, 3);
 
                         if (reg_info.size() < 3) 
                             continue; // Invalid format.
@@ -1327,34 +1286,35 @@ public:
                         bool is_uname_randomized = false;
                         if (!users.add_user(reg_info[0], reg_info[1], 
                             reg_info[2], err, is_uname_randomized)) {
-
                             simple_secure_send(0x10, cinfo_hash, &err, 1);
                             continue;
                         }
-                        if (is_uname_randomized)
-                            simple_secure_send(0x10, cinfo_hash, 
-                                reinterpret_cast<const uint8_t *>(reg_info[1].c_str()), 
-                                reg_info[1].size());
+                        std::string uinfo_res;
+                        if (is_uname_randomized) 
+                            uinfo_res = "!" + reg_info[0] + "!" + reg_info [1];
                         else
-                            simple_secure_send(0x10, cinfo_hash, ok, sizeof(ok));
+                            uinfo_res = ":" + reg_info[0] + ":" + reg_info [1];
+                        
+                        simple_secure_send(0x10, cinfo_hash, 
+                            reinterpret_cast<const uint8_t *>(uinfo_res.c_str()), 
+                            uinfo_res.size());
 
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
                         users.set_user_status(0, reg_info[0], 1);
-                        const char msg[] = "signed up and signed in!\n";
-                        broadcasting(false, reg_info[0], 
-                            reinterpret_cast<const uint8_t *>(server_bcast_header), 
-                            sizeof(server_bcast_header), 
-                            reinterpret_cast<const uint8_t *>(msg), 
-                            sizeof(msg));
+                        std::string bcast_msg = 
+                            "[SYSTEM_BCAST] " + reg_info[1] + 
+                            " signed up and signed in!";
+                        broadcasting((const uint8_t *)(bcast_msg.c_str()), 
+                                    bcast_msg.size());
                         continue;
                     }
                     // Processing sign in process. signin_type = 0: uemail, signin_type = 1: uname;
                     auto signin_type = msg_body[1];
                     if (signin_type != 0x00 && signin_type != 0x01) 
                         continue;
-                    auto signin_info = lc_utils::split_buffer_by_null(
-                                        msg_body + 2, msg_size - 2, 2);
+                    auto signin_info = lc_utils::split_buffer(
+                                        msg_body + 2, msg_size - 2, 0x00, 2);
                     
                     if (signin_info.size() < 2)
                         continue;
@@ -1366,8 +1326,6 @@ public:
                         simple_secure_send(0x10, cinfo_hash, &err, 1);
                         continue;
                     }
-
-                    simple_secure_send(0x10, cinfo_hash, ok, sizeof(ok));
                     std::string uname, uemail;
                     if (signin_type == 0x00) {
                         uemail = signin_info[0];
@@ -1377,27 +1335,31 @@ public:
                         uemail = *(users.get_uemail_by_uname(signin_info[0]));
                         uname = signin_info[0];
                     }
+                    std::string uinfo_res =
+                        ":" + uemail + ":" + uname;
+                    simple_secure_send(0x10, cinfo_hash, 
+                        reinterpret_cast<const uint8_t *>(uinfo_res.c_str()), 
+                        uinfo_res.size());
+                                
                     this_client->set_bind_uid(uemail);
                     this_client->set_status(2);
                     users.set_user_status(0, uemail, 1);
 
-                    uint64_t prev_cif;
-                    if (clients.clear_ctx_by_uid(uemail, prev_cif)) {
+                    uint64_t prev_cif = 0;
+                    if (clients.clear_ctx_by_uid(cinfo_hash, uemail, prev_cif))
+                    {
+                        std::string system_msg = 
+                            "[SYSTEM] " + std::string(auto_signout);
                         simple_secure_send(0x10, prev_cif, 
-                            reinterpret_cast<const uint8_t *>(auto_signout), 
-                            sizeof(auto_signout));
+                            (const uint8_t *)(system_msg.c_str()), 
+                            system_msg.size());
                     }
-                    
-                    broadcasting(false, uemail, 
-                        reinterpret_cast<const uint8_t *>(server_bcast_header), 
-                        sizeof(server_bcast_header), 
-                        reinterpret_cast<const uint8_t *>(signed_in), 
-                        sizeof(signed_in));
+                    std::string bcast_msg = 
+                            "[SYSTEM_BCAST] " + uname + " signed in!";
+                    broadcasting((const uint8_t *)(bcast_msg.c_str()), 
+                                bcast_msg.size());
                     continue;
                 }
-                broadcasting(true, this_client->get_bind_uid(), 
-                    reinterpret_cast<const uint8_t *>(server_bcast_header), 
-                    sizeof(server_bcast_header), msg_body, msg_size);
             }
         }
     }
@@ -1415,7 +1377,8 @@ int main (int argc, char **argv) {
         if (lc_utils::string_to_u16(argv[1], port))
             std::cout << "Using the specified port: " << port << std::endl;
         else
-            std::cout << "Specified port " << argv[1] << " is invalid. Using the default 8081." << std::endl;
+            std::cout << "Specified port " << argv[1] 
+                      << " is invalid. Using the default 8081." << std::endl;
     }
     else {
         std::cout << "No port specified, using the default 8081." << std::endl;

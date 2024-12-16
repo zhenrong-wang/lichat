@@ -33,8 +33,8 @@ namespace lc_utils {
         return ret;
     }
 
-    static std::vector<std::string> split_buffer_by_null (const uint8_t *data, 
-        const size_t data_bytes, const size_t max_items) {
+    static std::vector<std::string> split_buffer (const uint8_t *data, 
+        const size_t data_bytes, const uint8_t ch, const size_t max_items) {
         
         std::vector<std::string> ret;
         const uint8_t *start = data;
@@ -42,7 +42,7 @@ namespace lc_utils {
         const uint8_t *current = start;
         while (current < end && ret.size() <= max_items) {
             auto next_null = static_cast<const uint8_t *>
-                             (std::memchr(current, 0x00, (end - current)));
+                             (std::memchr(current, ch, (end - current)));
             if (next_null != nullptr) {
                 size_t length = next_null - current;
                 ret.emplace_back(reinterpret_cast<const char *>(current), 
@@ -122,21 +122,33 @@ namespace lc_utils {
         return 0; // Good to go.
     }
 
-    static bool pass_hash (std::string& password, 
+    static bool pass_hash_secure (std::string& password, 
         std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
         
         auto ret = 
-        crypto_pwhash_str(
+        (crypto_pwhash_str(
             hashed_pwd.data(), 
             password.c_str(), 
             password.size(), 
             crypto_pwhash_OPSLIMIT_INTERACTIVE, 
             crypto_pwhash_MEMLIMIT_INTERACTIVE
-        );
+        ) == 0);
         password.clear(); // For security reasons, we clean the string after hashing.
-        if (ret == 0)
-            return true;
-        return false;
+        return ret;
+    }
+
+    // This pass doesnt change the original pass string !
+    static bool pass_hash_dryrun (const std::string& password, 
+        std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
+        auto ret = 
+        (crypto_pwhash_str(
+            hashed_pwd.data(), 
+            password.c_str(), 
+            password.size(), 
+            crypto_pwhash_OPSLIMIT_INTERACTIVE, 
+            crypto_pwhash_MEMLIMIT_INTERACTIVE
+        ) == 0);
+        return ret;
     }
 
     static int email_fmt_check (const std::string& email) {
