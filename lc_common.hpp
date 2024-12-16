@@ -28,7 +28,7 @@ namespace lc_utils {
         crypto_generichash(hash, CIF_BYTES, client_info.data(), 
                            client_info.size(), nullptr, 0);
         uint64_t ret = 0;
-        for(uint8_t i = 0; i < CIF_BYTES; ++ i)
+        for (uint8_t i = 0; i < CIF_BYTES; ++ i)
             ret |= (static_cast<uint64_t>(hash[i]) << (i << 3));
         return ret;
     }
@@ -62,14 +62,14 @@ namespace lc_utils {
 
     static std::array<uint8_t, 8> u64_to_bytes (uint64_t num) {
         std::array<uint8_t, 8> ret;
-        for(uint8_t i = 0; i < 8; ++ i) 
+        for (uint8_t i = 0; i < 8; ++ i) 
             ret[i] = static_cast<uint8_t>((num >> (i << 3)) & 0xFF);
         return ret;
     }
 
     static uint64_t bytes_to_u64 (std::array<uint8_t, 8> arr) {
         uint64_t num = 0;
-        for(uint8_t i = 0; i < 8; ++ i)
+        for (uint8_t i = 0; i < 8; ++ i)
             num |= (static_cast<uint64_t>(arr[i]) << (i << 3));
         return num;
     }
@@ -88,7 +88,7 @@ namespace lc_utils {
             return -1; // Length error.
 
         uint8_t num = 0, lower = 0, upper = 0, special = 0;
-        for(auto c : pass_str) {
+        for (auto c : pass_str) {
             if (std::isdigit(static_cast<unsigned char>(c))) {
                 num = 1; continue;
             }
@@ -114,7 +114,7 @@ namespace lc_utils {
     static int user_name_fmt_check (const std::string& uname) {
         if (uname.size() < ULOGIN_MIN_BYTES || uname.size() > UNAME_MAX_BYTES)
             return -1; // Length error.
-        for(auto c : uname) {
+        for (auto c : uname) {
             if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && 
                 c != '_')
                 return 1; // Illegal char found.
@@ -177,7 +177,7 @@ namespace lc_utils {
      static bool string_to_u16(const std::string& str, uint16_t& res) {
         if (str.size() > 5)
             return false;
-        for(auto c : str) {
+        for (auto c : str) {
             if (!isdigit(c))
                 return false;
         }
@@ -227,7 +227,7 @@ namespace lc_utils {
 
     void print_array(const uint8_t *arr, const size_t n) {
         printf("\n");
-        for(size_t i = 0; i < n; ++ i) 
+        for (size_t i = 0; i < n; ++ i) 
             printf("%x ", arr[i]);
         printf("\n %lu \n", n);
     }
