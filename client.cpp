@@ -20,12 +20,64 @@
 #include <stdexcept>
 #include <iomanip>
 #include <atomic>
+#include <thread>
+#include <functional>
+#include <fcntl.h>
+#include <errno.h>
 
-constexpr size_t BOTTOM_HEIGHT = 3;
-constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n";
+constexpr char welcome[] = "\nWelcome to LightChat Service (aka LiChat)!\n\
+We support Free Software and Free Speech.\n\
+Code: https://github.com/zhenrong-wang/lichat\n";
 constexpr char prompt[] = "Enter Your message: ";
 
-std::atomic<bool> thread_run;
+std::atomic<bool> tui_running;
+
+enum client_errors {
+    NORMAL_RETURN = 0,
+    CLIENT_KEY_MGR_ERROR,
+    SOCK_FD_INVALID,
+    MSG_SIGNING_FAILED,
+    SERVER_PK_MGR_ERROR,
+    SESSION_PREP_FAILED,
+    UNBLOCK_SOCK_FAILED,
+    WINDOW_SIZE_INVALID,
+    WINDOW_CREATION_FAILED,
+    TEXT_UI_ERROR,
+    HASH_PASSWORD_FAILED,
+};
+
+class curr_user {
+    std::string unique_email;
+    std::string unique_name;
+    bool with_random_suffix;
+
+public:
+    curr_user () : with_random_suffix(false) {}
+    
+    void set_uemail (const std::string& str) {
+        unique_email = str;
+    }
+    
+    void set_uname (const std::string& str) {
+        unique_name = str;
+    }
+
+    void set_suffix_flag (bool flag) {
+        with_random_suffix = flag;
+    }
+
+    const std::string& get_uemail () const {
+        return unique_email;
+    }
+
+    const std::string& get_uname () const {
+        return unique_name;
+    }
+
+    const bool get_suffix_flag () const {
+        return with_random_suffix;
+    }
+};
 
 class client_server_pk_mgr {
     std::string server_pk_dir;
@@ -135,7 +187,7 @@ class client_session {
     bool is_server_key_req;
 
 public:
-    client_session () : status(0) {
+    client_session () : status(0), is_server_key_req(false) {
         randombytes_buf(client_cid.data(), client_cid.size());
     }
 
@@ -231,24 +283,24 @@ public:
 class lichat_client {
     uint16_t server_port;
     struct sockaddr_in server_addr;
-    int client_main_fd;
-    int thread_recv_fd;
+    int client_fd;
     client_server_pk_mgr server_pk_mgr;
     std::string key_dir;
     client_session session;
     key_mgr_25519 client_key;
     msg_buffer buffer;
     std::vector<std::string> messages;
+    curr_user user;
     int last_error;
 
 public:
 
     lichat_client () : 
-    client_main_fd(-1), thread_recv_fd(-1), 
-    server_pk_mgr(client_server_pk_mgr()), 
-    key_dir(default_key_dir),
-    session(client_session()), client_key(key_mgr_25519(key_dir, "client_")), 
-    buffer(msg_buffer()), last_error(0) {
+        client_fd(-1), server_pk_mgr(client_server_pk_mgr()), 
+        key_dir(default_key_dir), session(client_session()), 
+        client_key(key_mgr_25519(key_dir, "client_")), 
+        buffer(msg_buffer()), user(curr_user()), last_error(0) {
+
         server_port = DEFAULT_SERVER_PORT;
         server_addr.sin_addr.s_addr = inet_addr(DEFAULT_SERVER_ADDR);
         server_addr.sin_family = AF_INET;
@@ -297,40 +349,133 @@ public:
             return "Unknown server error.";
     }
 
-    void thread_recv_print (WINDOW *win, int& thread_err) {
+    bool nonblock_socket () {
+        int flags = fcntl(client_fd, F_GETFL, 0);
+        if (flags == -1)
+            return false;
+        flags |= O_NONBLOCK;
+        if (fcntl(client_fd, F_SETFL, flags) == -1)
+            return false;
+        return true;
+    }
+
+    static void wprint_array(WINDOW *win, const uint8_t *arr, const size_t n) {
+        wprintw(win, "\n");
+        for(size_t i = 0; i < n; ++ i) 
+            wprintw(win, "%x ", arr[i]);
+        wprintw(win, "\n");
+        wrefresh(win);
+    }
+
+    static void thread_run_tui (WINDOW *top_win, WINDOW *side_win, const int fd, 
+        msg_buffer& buff, const client_session& s, 
+        const client_server_pk_mgr& server_pk, const curr_user& u,
+        std::vector<std::string>& msg_vec, int& thread_err) {
+        
         thread_err = 0;
-        if (win == nullptr) {
+        if (top_win == nullptr || side_win == nullptr) {
+            thread_err = -1;
+            return;
+        }
+        if (fd < 0) {
             thread_err = 1;
             return;
         }
-        if (thread_recv_fd < 0) {
-            thread_err = 3;
-            return;
-        }
+        bool is_msg_recved = false, quit = false;
         struct sockaddr_in src_addr;
-        while (thread_run) {
-            auto bytes = wait_server_response(src_addr);
-            if (!decrypt_recv_0x10raw_bytes(bytes))
+        auto addr_len = sizeof(src_addr);
+        size_t offset = 0;
+        unsigned long long unsign_len = 0, aes_decrypted_len = 0;
+        auto raw_beg = buff.recv_raw_buffer.begin();
+        auto aes_beg = buff.recv_aes_buffer.begin();
+        auto sid = s.get_server_sid();
+        auto cif = s.get_cinfo_hash_bytes();
+
+        wmove(top_win, getcury(top_win) + 1, 0);
+        wprintw(top_win, "[SYSTEM] Your unique email: %s\n", 
+                u.get_uemail().c_str());     
+        wprintw(top_win, "[SYSTEM] Your unique username: %s\n", 
+                u.get_uname().c_str()); 
+        wrefresh(top_win);
+
+        while (tui_running) {
+            auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
+                buff.recv_raw_buffer.size(), MSG_WAITALL, 
+                (struct sockaddr *)(&src_addr), (socklen_t *)&addr_len);
+            errno = 0;
+            is_msg_recved = false;
+            if (bytes < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    continue;
+                else {
+                    thread_err = 3;
+                    return;
+                }
+            }
+            if (bytes < CLIENT_RECV_MIN_BYTES) 
                 continue;
-            std::string str(reinterpret_cast<const char*>
-                (buffer.recv_aes_buffer.data()), buffer.recv_aes_bytes);
-            messages.push_back(str);
-
-
+            offset = 0;
+            auto header = buff.recv_raw_buffer[0];
+            if (header != 0x11 && header != 0x10)
+                continue;
+            if (header == 0x11) {
+                ++ offset;
+                if (crypto_sign_open(nullptr, &unsign_len, raw_beg + offset,
+                    bytes - 1, server_pk.get_server_spk().data()) != 0)
+                    continue;
+                offset += crypto_sign_BYTES;
+                std::string msg_str((const char *)(raw_beg + offset), 
+                                    bytes - offset);
+                msg_vec.push_back(msg_str);
+                is_msg_recved = true;
+            }
+            else {
+                std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
+                std::array<uint8_t, SID_BYTES> recved_sid;
+                std::array<uint8_t, CIF_BYTES> recved_cif;
+                ++ offset;
+                std::copy(raw_beg + offset, 
+                    raw_beg + offset + crypto_aead_aes256gcm_NPUBBYTES, 
+                    aes_nonce.begin());
+                offset += crypto_aead_aes256gcm_NPUBBYTES;
+                auto res = 
+                    (crypto_aead_aes256gcm_decrypt(
+                        aes_beg, &aes_decrypted_len, NULL,
+                        raw_beg + offset, bytes - offset,
+                        NULL, 0,
+                        aes_nonce.data(), s.get_aes256gcm_key().data()
+                    ) == 0);
+                buff.recv_aes_bytes = aes_decrypted_len;
+                if (!res) 
+                    continue;
+                offset = 0;
+                std::copy(aes_beg + offset, aes_beg + offset + SID_BYTES, 
+                            recved_sid.begin());
+                offset += SID_BYTES;
+                std::copy(aes_beg + offset, aes_beg + offset + CIF_BYTES,
+                            recved_cif.begin());
+                if (sid != recved_sid || cif != recved_cif)
+                    continue;
+                std::string msg_str(
+                    (const char *)(aes_beg + SID_BYTES + CIF_BYTES), 
+                    buff.recv_aes_bytes - SID_BYTES - CIF_BYTES);
+                msg_vec.push_back(msg_str);
+                is_msg_recved = true;
+            }
+            if (is_msg_recved) {
+                wmove(top_win, getcury(top_win) + 1, 0);
+                wprintw(top_win, "%s\n", msg_vec.back().c_str());
+                wrefresh(top_win);
+            }
         }
-            
     }
 
     // Close server and possible FD
     bool close_client (int err) {
         last_error = err;
-        if (client_main_fd != -1) {
-            close(client_main_fd); 
-            client_main_fd = -1;
-        }
-        if (thread_recv_fd != -1) {
-            close(thread_recv_fd);
-            thread_recv_fd = -1;
+        if (client_fd != -1) {
+            close(client_fd); 
+            client_fd = -1;
         }
         return err == 0;
     }
@@ -342,11 +487,11 @@ public:
     bool start_client (void) {
         if (client_key.key_mgr_init() != 0) {
             std::cout << "Key manager not activated. @ START." << std::endl;
-            return close_client(1);
+            return close_client(CLIENT_KEY_MGR_ERROR);
         }
-        client_main_fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (client_main_fd < 0) 
-            return close_client(3);
+        client_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (client_fd < 0) 
+            return close_client(SOCK_FD_INVALID);
         std::cout << "lichat client started." << std::endl;
         return true;
     }
@@ -397,7 +542,7 @@ public:
     int simple_send (const client_session& curr_s, 
         const uint8_t *buf, size_t n) {
         auto addr = curr_s.get_src_addr();
-        return sendto(client_main_fd, buf, n, 0, 
+        return sendto(client_fd, buf, n, 0, 
                         (const struct sockaddr*)(&addr), sizeof(addr));
     }
 
@@ -471,6 +616,8 @@ public:
         return ret;
     }
 
+
+    // Read the recv_raw_buffer and decrypt message body to recv_aes_buffer
     bool decrypt_recv_0x10raw_bytes (const ssize_t recved_raw_bytes) {
         if (recved_raw_bytes < lc_utils::calc_encrypted_len(1))
             return false;
@@ -506,7 +653,7 @@ public:
         buffer.clear_buffer();
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
-        auto ret = recvfrom(client_main_fd, buffer.recv_raw_buffer.data(), 
+        auto ret = recvfrom(client_fd, buffer.recv_raw_buffer.data(), 
                             buffer.recv_raw_buffer.size(), MSG_WAITALL, 
                             (struct sockaddr *)(&src_addr), 
                             (socklen_t *)&addr_len);
@@ -563,13 +710,11 @@ public:
     bool run_client (void) {
         if (!client_key.is_activated()) {
             std::cout << "Key manager not activated." << std::endl;
-            last_error = 1;
-            return false;
+            return close_client(CLIENT_KEY_MGR_ERROR);
         }
-        if (client_main_fd == -1) {
+        if (client_fd == -1) {
             std::cout << "Client not started." << std::endl;
-            last_error = 3;
-            return false;
+            return close_client(SOCK_FD_INVALID);
         }
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> server_aes_nonce;
         std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes_key;
@@ -601,10 +746,9 @@ public:
                     crypto_sign_BYTES + CID_BYTES + crypto_box_PUBLICKEYBYTES> 
                     signed_cid_cpk;
 
-                if (!sign_cid_cpk(signed_cid_cpk)) {
-                    last_error = 5;
-                    return false;
-                }
+                if (!sign_cid_cpk(signed_cid_cpk)) 
+                    return close_client(MSG_SIGNING_FAILED);
+
                 std::copy(signed_cid_cpk.begin(), signed_cid_cpk.end(), 
                             buffer.send_buffer.begin() + offset);
                 buffer.send_bytes = offset + signed_cid_cpk.size();
@@ -658,10 +802,8 @@ public:
                                 recved_server_cpk.begin());
                         offset += crypto_box_PUBLICKEYBYTES;
                         if (!server_pk_mgr.update_server_pk(recved_server_spk, 
-                            recved_server_cpk)) {
-                            last_error = 5;
-                            return false;
-                        }
+                            recved_server_cpk))
+                            return close_client(SERVER_PK_MGR_ERROR);
                     }
                     else {
                         if (session.requested_server_key())
@@ -727,10 +869,8 @@ public:
                                       << session.get_status() << std::endl;
                             continue;
                         }
-                        else if (ret < 0) {
-                            last_error = 7;
-                            return false;
-                        }
+                        else if (ret < 0) 
+                            return close_client(SESSION_PREP_FAILED);
                         is_msg_ok = false;
                     }
                     offset = 0;
@@ -753,10 +893,9 @@ public:
                     offset += client_spk.size();
                     std::array<uint8_t, crypto_sign_BYTES + CID_BYTES + 
                                 crypto_box_PUBLICKEYBYTES> signed_cid_cpk;
-                    if (!sign_cid_cpk(signed_cid_cpk)) {
-                        last_error = 5;
-                        return false;
-                    }
+                    if (!sign_cid_cpk(signed_cid_cpk)) 
+                        return close_client(MSG_SIGNING_FAILED);
+
                     std::copy(signed_cid_cpk.begin(), signed_cid_cpk.end(), 
                                 buffer.send_buffer.begin() + offset);
                     buffer.send_bytes = offset + signed_cid_cpk.size();
@@ -805,8 +944,8 @@ public:
                                     beg + offset + crypto_box_PUBLICKEYBYTES, 
                                     recved_server_cpk.begin());
 
-                                server_pk_mgr.update_server_pk(recved_server_spk, 
-                                    recved_server_cpk);
+                                server_pk_mgr.update_server_pk(
+                                    recved_server_spk, recved_server_cpk);
                                 session.reset();
                                 continue;
                             }
@@ -882,26 +1021,19 @@ public:
                     std::cout << parse_server_auth_error(*msg_body) 
                               << std::endl;
                     session.set_status(3);
-                    break;
+                    continue;
                 }
-                else if (msg_size == 2 && 
-                    std::memcmp(msg_body, ok, sizeof(ok))== 0) {
-
-                    std::cout << "Auth succeeded by the server." << std::endl;
-                    session.auth_ok();
-                    break;
-                }
-                else {
-                    std::cout << 
-                    "Auth succeeded by the server with a randomized username." 
-                    << std::endl;
-
-                    std::cout << "Please *DO* remember this username: " 
-                    << std::string(reinterpret_cast<char *>(msg_body), msg_size)
-                    << std::endl;
-                    session.auth_ok();
-                    break;
-                }
+                auto uinfo_res = lc_utils::split_buffer(
+                    msg_body + 1, msg_size - 1, msg_body[0], 3
+                );
+                if(uinfo_res.size() != 2)
+                    continue;
+                std::cout << "Auth succeeded by the server." << std::endl;
+                session.auth_ok();
+                user.set_suffix_flag(msg_body[0] == '!');
+                user.set_uemail(uinfo_res[0]);
+                user.set_uname(uinfo_res[1]);
+                break; // Auth succeeded
             }
             if (status == 3) {
                 std::string option, login_type, uemail, uname, password;
@@ -946,52 +1078,88 @@ public:
                         CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
                         continue;
                 }
+                std::array<char, crypto_pwhash_STRBYTES> hashed_pwd;
+                if (!lc_utils::pass_hash_dryrun(password, hashed_pwd)) {
+                    last_error = HASH_PASSWORD_FAILED;
+                    password.clear(); // For security concern.
+                    return false;
+                }
                 auto user_info = assemble_user_info(
                     (option == "1" || option == "signup"), 
                     (login_type == "1" || login_type == "email"),
                     uemail, uname, password);
                 simple_secure_send(0x10, session, user_info.data(), 
                                     user_info.size());
+                
                 session.sent_auth();
                 continue;
             }
         }
-        getchar();
-        thread_recv_fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (thread_recv_fd < 0) {
-            std::cout << "Failed to start a receiver socket." << std::endl;
-            return close_client(9);
-        }
-        thread_run = true;
+
+        //thread_run = true;
+        if (!nonblock_socket()) 
+            return close_client(UNBLOCK_SOCK_FAILED);
+
+        // Now, the messaging interface started.
         setlocale(LC_ALL, "");
         initscr();
         cbreak();
         noecho();
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
-        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT, width, 0, 0);
-        WINDOW *bottom_win = newwin(3, width, height - BOTTOM_HEIGHT, 0);
-        if (!top_win || !bottom_win) {
+
+        if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
+            std::cout << "Window size too small (min: w x h " 
+                      << (int)WIN_WIDTH_MIN << " x " << (int)WIN_HEIGHT_MIN
+                      << " )." << std::endl;
+            endwin();
+            return close_client(WINDOW_SIZE_INVALID);
+        }
+
+        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT, 
+                                width - SIDE_WIN_WIDTH, 0, 0);
+        WINDOW *bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH, 
+                                height - BOTTOM_HEIGHT, 0);
+        WINDOW *side_win = newwin(height, SIDE_WIN_WIDTH, 0, 
+                                width - SIDE_WIN_WIDTH);
+
+        if (!top_win || !bottom_win || !side_win) {
             std::cerr << "Failed to create windows." << std::endl;
             if (top_win) delwin(top_win);
             if (bottom_win) delwin(bottom_win);
+            if (side_win) delwin(side_win);
             endwin();
-            return close_client(11);;
+            return close_client(WINDOW_CREATION_FAILED);
         }
+        // activate keypad for input
         keypad(bottom_win, TRUE);
+        // Activate scroll
         scrollok(top_win, TRUE);
         scrollok(bottom_win, TRUE);
+        scrollok(side_win, TRUE);
+
+        // Print welcome.
         wprintw(top_win, welcome);
         wrefresh(top_win);
         wprintw(bottom_win, prompt);
         wrefresh(bottom_win);
+        wprintw(side_win, "Users: \n");
+        wrefresh(side_win);
+
+        tui_running = true;
+        int thread_err = 0;
+        std::thread tui(std::bind(thread_run_tui, top_win, side_win, 
+            client_fd, buffer, session, server_pk_mgr, user, messages, 
+            thread_err));
 
         wgetch(bottom_win);
 
-
+        tui.join();
         delwin(top_win);
         delwin(bottom_win);
+        delwin(side_win);
         endwin();
+        return (thread_err != 0) ? TEXT_UI_ERROR : NORMAL_RETURN;
     }
 };
 
