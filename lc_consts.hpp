@@ -19,9 +19,13 @@ constexpr size_t PASSWORD_MIN_BYTES = 4;
 constexpr char DEFAULT_SERVER_ADDR[] = "127.0.0.1";
 constexpr uint16_t DEFAULT_SERVER_PORT = 8081;
 
+constexpr uint8_t ok[] = {'O', 'K'};
+constexpr uint8_t yes[] = {'y', 'e', 's'};
+constexpr uint8_t no[] = {'n', 'o'};
+
 constexpr size_t BUFF_SIZE = 4096;
 constexpr size_t INPUT_BUFF_SIZE = BUFF_SIZE - 128;
-
+constexpr size_t ERR_CODE_BYTES = 6;
 constexpr size_t SERVER_RECV_MIN_BYTES = 1 + CID_BYTES + crypto_box_PUBLICKEYBYTES;
 constexpr size_t CLIENT_RECV_MIN_BYTES = 1 + ERR_CODE_BYTES;
 
@@ -37,15 +41,10 @@ constexpr std::array<char, SPECIAL_CHAR_NUM> special_chars = {
     ']', '-', '_', '=', '+', ';', ':', ',', '.', '<', '>', '/', '|'
 };
 
-constexpr size_t ERR_CODE_BYTES = 6;
 constexpr uint8_t server_ff_failed[ERR_CODE_BYTES + 1] = {0xFF, 'F', 'A', 'I', 'L', 'E', 'D'};
 constexpr uint8_t server_ef_keyerr[ERR_CODE_BYTES + 1] = {0xEF, 'K', 'E', 'Y', 'E', 'R', 'R'};
 constexpr uint8_t server_df_msgerr[ERR_CODE_BYTES + 1] = {0xDF, 'M', 'S', 'G', 'E', 'R', 'R'};
 constexpr uint8_t server_cf_siderr[ERR_CODE_BYTES + 1] = {0xCF, 'S', 'I', 'D', 'E', 'R', 'R'};
-
-constexpr uint8_t ok[] = {'O', 'K'};
-constexpr uint8_t yes[] = {'y', 'e', 's'};
-constexpr uint8_t no[] = {'n', 'o'};
 
 constexpr uint8_t client_ff_timout[ERR_CODE_BYTES] = {'T', 'I', 'M', 'O', 'U', 'T'};
 constexpr uint8_t client_ef_keyerr[ERR_CODE_BYTES] = {'K', 'E', 'Y', 'E', 'R', 'R'};
