@@ -36,7 +36,10 @@ std::atomic<bool> tui_running(false);
 std::atomic<bool> heartbeating(false);
 std::atomic<bool> send_msg_req(false);
 std::atomic<bool> heartbeat_req(false);
-std::atomic<time_t> last_heatbeat(0);
+std::atomic<bool> heartbeat_timeout(false);
+
+std::atomic<time_t> last_heartbeat_sent(0);
+std::atomic<time_t> last_heartbeat_recv(0);
 
 std::string send_msg_body;
 std::mutex mtx;
@@ -481,19 +484,15 @@ public:
     }
 
     // Sign the "ok" and return.
-    static bool pack_heatbeat (
+    static bool pack_heartbeat (
         const std::array<uint8_t, CIF_BYTES>& cif_bytes,
         const std::array<uint8_t, crypto_sign_SECRETKEYBYTES>& client_sign_sk,
-        std::array<uint8_t, HEATBEAT_BYTES>& packet) {
+        std::array<uint8_t, HEARTBEAT_BYTES>& packet) {
         
         packet[0] = 0x1F;
-        size_t offset = 1;
-        auto beg = packet.begin();
-        std::copy(cif_bytes.begin(), cif_bytes.end(), beg + offset);
-        offset += CIF_BYTES;
         unsigned long long sign_len = 0;
-        if (crypto_sign(packet.data() + offset, &sign_len, ok, sizeof(ok), 
-            client_sign_sk.data()) != 0) 
+        if (crypto_sign(packet.data() + 1, &sign_len, cif_bytes.data(), 
+            cif_bytes.size(), client_sign_sk.data()) != 0) 
             return false;
         return true;
     }
@@ -501,17 +500,21 @@ public:
     static void thread_heartbeat () {
         while (heartbeating) {
             auto now = lc_utils::now_time();
-            if((now % CLIENT_HEARTBEAT_INVERTAL == 0) || 
-               ((now - last_heatbeat) > CLIENT_HEARTBEAT_INVERTAL)) {
-                heartbeat_req.store(true);
+            if (now - last_heartbeat_recv >= HEARTBEAT_TIMEOUT_SECS) {
+                heartbeat_timeout.store(true);
             }
-            
-            std::this_thread::sleep_for(std::chrono::seconds(60));
+            else {
+                if ((now % HEARTBEAT_INTERVAL_SECS == 0) || 
+                    ((now - last_heartbeat_sent) >= HEARTBEAT_INTERVAL_SECS)) 
+                    heartbeat_req.store(true);
+            }
+            std::this_thread::sleep_for(
+                std::chrono::seconds(HEARTBEAT_THREAD_SLEEP));
         }
     }
 
     static void thread_run_core (WINDOW *top_win, WINDOW *side_win, 
-        const int fd, msg_buffer& buff, const client_session& s, 
+        const int fd, msg_buffer& buff, client_session& s, 
         const client_server_pk_mgr& server_pk, const curr_user& u,
         const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
         int& thread_err) {
@@ -536,7 +539,10 @@ public:
         auto aes_beg = buff.recv_aes_buffer.begin();
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
-        std::array<uint8_t, HEATBEAT_BYTES> hb_pack;
+        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
+        std::array<uint8_t, SID_BYTES> recved_sid;
+        std::array<uint8_t, CIF_BYTES> recved_cif;
+        std::array<uint8_t, HEARTBEAT_BYTES> hb_pack;
 
         wprintw(top_win, "\n[SYSTEM] Your unique email: %s\n", 
                 u.get_uemail().c_str());     
@@ -544,7 +550,7 @@ public:
                 u.get_uname().c_str()); 
         wrefresh(top_win);
 
-        while (tui_running) {
+        while (tui_running && heartbeating) {
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
                 buff.recv_raw_buffer.size(), MSG_WAITALL, 
                 (struct sockaddr *)(&src_addr), (socklen_t *)&addr_len);
@@ -566,7 +572,7 @@ public:
                     }
                     else {
                         if (heartbeat_req) {
-                            if (!pack_heatbeat(s.get_cinfo_hash_bytes(),
+                            if (!pack_heartbeat(s.get_cinfo_hash_bytes(),
                                 client_k.get_sign_sk(), hb_pack)) {
                                 thread_err = 3;
                                 tui_running.store(false);
@@ -580,7 +586,7 @@ public:
                                 heartbeating.store(false);
                                 return;
                             }
-                            last_heatbeat.store(lc_utils::now_time());
+                            last_heartbeat_sent.store(lc_utils::now_time());
                             heartbeat_req.store(false);
                         }
                         continue;
@@ -594,7 +600,7 @@ public:
                 continue;
             offset = 0;
             auto header = buff.recv_raw_buffer[0];
-            if (header != 0x11 && header != 0x10)
+            if (header != 0x11 && header != 0x10 && header != 0x1F)
                 continue;
             if (header == 0x11) {
                 ++ offset;
@@ -607,10 +613,23 @@ public:
                 msg_vec.push_back(msg_str);
                 is_msg_recved = true;
             }
+            else if (header == 0x1F) {
+                if (bytes != HEARTBEAT_BYTES)
+                    continue;
+                ++ offset;
+                if (crypto_sign_open(nullptr, &unsign_len, raw_beg + offset,
+                    bytes - offset, server_pk.get_server_spk().data()) != 0)
+                    continue;
+                if (std::memcmp(raw_beg + 1 + crypto_sign_BYTES, cif.data(), 
+                    cif.size()) != 0)
+                    continue;
+                mtx.lock();
+                s.update_src_addr(src_addr);
+                mtx.unlock();
+                last_heartbeat_recv.store(lc_utils::now_time());
+                continue;
+            }
             else {
-                std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
-                std::array<uint8_t, SID_BYTES> recved_sid;
-                std::array<uint8_t, CIF_BYTES> recved_cif;
                 ++ offset;
                 std::copy(raw_beg + offset, 
                     raw_beg + offset + crypto_aead_aes256gcm_NPUBBYTES, 
@@ -1340,6 +1359,11 @@ public:
                 user.set_suffix_flag(msg_body[0] == '!');
                 user.set_uemail(uinfo_res[0]);
                 user.set_uname(uinfo_res[1]);
+
+                // Save the current time.
+                auto now = lc_utils::now_time();
+                last_heartbeat_sent.store(now);
+                last_heartbeat_recv.store(now);
                 break; // Auth succeeded
             }
             if (status == 3) {
@@ -1455,6 +1479,7 @@ public:
 
         tui_running.store(true);
         heartbeating.store(true);
+        heartbeat_timeout.store(false);
         int thread_err = 0;
         std::thread tui(std::bind(thread_run_core, top_win, side_win, 
             client_fd, buffer, session, server_pk_mgr, user, client_key,

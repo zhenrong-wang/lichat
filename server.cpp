@@ -1011,7 +1011,7 @@ public:
     }
 
     // Main processing method.
-    int run_server (void) {
+    bool run_server (void) {
         if (!key_mgr.is_activated()) {
             std::cout << "Key manager not activated." << std::endl;
             return 1;
@@ -1031,7 +1031,7 @@ public:
         while (true) {
             struct sockaddr_in client_addr;
             auto addr_len = sizeof(client_addr);
-            unsigned long long unsign_len = 0;
+            unsigned long long unsign_len = 0, sign_len = 0;
             buffer.clear_buffer();
             auto bytes_recv = recvfrom(server_fd, buffer.recv_raw_buffer.data(), 
                                     buffer.recv_raw_buffer.size(), MSG_WAITALL, 
@@ -1073,13 +1073,12 @@ public:
                 }
 
                 // 0x00/0x01 + client_sign_key + signed (CID + client_pub_key);
-                unsigned long long sign_check_len;
                 std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> spk;
                 std::copy(beg + offset, 
                         beg + offset + crypto_sign_PUBLICKEYBYTES, spk.begin());
                 offset += crypto_sign_PUBLICKEYBYTES;
 
-                if (crypto_sign_open(nullptr, &sign_check_len, beg + offset, 
+                if (crypto_sign_open(nullptr, &unsign_len, beg + offset, 
                     buffer.recv_raw_bytes - offset, spk.data()) != 0) {
 
                     simple_send(client_addr, server_ff_failed, 
@@ -1104,7 +1103,7 @@ public:
                     simple_send(client_addr, 
                                 (const uint8_t *)server_internal_fatal, 
                                 sizeof(server_internal_fatal));
-                    return 127;
+                    return close_server(127);
                 }
                 this_conn->set_src_addr(client_addr);
                 if (header == 0x00)
@@ -1226,29 +1225,30 @@ public:
             }
             // Heartbeat message, must be signed with the client_sign_secret_key
             if (header == 0x1F) {
-                size_t expected_size = 1 + CIF_BYTES + crypto_sign_BYTES + 
-                                       sizeof(ok);
-                if (buffer.recv_raw_bytes != expected_size)
+                if (buffer.recv_raw_bytes != HEARTBEAT_BYTES)
                     continue;
-                std::array<uint8_t, CID_BYTES> recved_cif_bytes;
+                std::array<uint8_t, CIF_BYTES> recved_cif_bytes;
                 auto beg = buffer.recv_raw_buffer.begin();
-                offset = 1;
-                std::copy(beg + offset, beg + offset + CID_BYTES, 
+                auto cif_pos = beg + 1 + crypto_sign_BYTES;
+                std::copy(cif_pos, cif_pos + CIF_BYTES, 
                           recved_cif_bytes.begin());
-                offset += CID_BYTES;
                 auto recved_cif = lc_utils::bytes_to_u64(recved_cif_bytes);
                 auto ptr_session = conns.get_session(recved_cif);
                 if (ptr_session == nullptr)
                     continue; // Not a valid cif.
                 auto client_spk = ptr_session->get_client_sign_key();
-                if (crypto_sign_open(nullptr, &unsign_len, beg + offset,
-                    expected_size - offset, client_spk.data()))
+                if (crypto_sign_open(nullptr, &unsign_len, beg + 1,
+                    HEARTBEAT_BYTES - 1, client_spk.data()))
                     continue;  // Not a valid signature.
-                offset += crypto_sign_BYTES;
-                if (std::memcmp(beg + offset, ok, sizeof(ok)) != 0)
-                    continue; // Not a valid tail message.
                 // All the checks done, update the addr.
                 ptr_session->set_src_addr(client_addr);
+                std::array<uint8_t, HEARTBEAT_BYTES> packet;
+                packet[0] = 0x1F;
+                if (crypto_sign(packet.data() + 1, &sign_len, 
+                    recved_cif_bytes.data(), recved_cif_bytes.size(), 
+                    key_mgr.get_sign_sk().data()) != 0) 
+                    return close_server(7);
+                simple_send(client_addr, packet.data(), packet.size());
                 continue;
             }
             if (header == 0x10) {
