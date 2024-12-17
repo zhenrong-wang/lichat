@@ -114,6 +114,8 @@ namespace lc_utils {
     static int user_name_fmt_check (const std::string& uname) {
         if (uname.size() < ULOGIN_MIN_BYTES || uname.size() > UNAME_MAX_BYTES)
             return -1; // Length error.
+        if(uname == "system" || uname == "SYSTEM") // Reserved
+            return -3;
         for (auto c : uname) {
             if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && 
                 c != '_')

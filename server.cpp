@@ -1040,6 +1040,7 @@ public:
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
         size_t aes_encrypted_len = 0;
         size_t aes_decrypted_len = 0;
+        std::string timestamp;
         while (true) {
             struct sockaddr_in client_addr;
             auto addr_len = sizeof(client_addr);
@@ -1302,8 +1303,9 @@ public:
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
                         users.set_user_status(0, reg_info[0], 1);
+                        timestamp = get_current_time();
                         std::string bcast_msg = 
-                            "[SYSTEM_BCAST] " + reg_info[1] + 
+                            timestamp + ",[SYSTEM_BCAST]," + reg_info[1] + 
                             " signed up and signed in!";
                         broadcasting((const uint8_t *)(bcast_msg.c_str()), 
                                     bcast_msg.size());
@@ -1348,19 +1350,38 @@ public:
                     uint64_t prev_cif = 0;
                     if (clients.clear_ctx_by_uid(cinfo_hash, uemail, prev_cif))
                     {
+                        timestamp = get_current_time();
                         std::string system_msg = 
-                            "[SYSTEM] " + std::string(auto_signout);
+                            ",[SYSTEM]," + std::string(auto_signout);
                         simple_secure_send(0x10, prev_cif, 
                             (const uint8_t *)(system_msg.c_str()), 
                             system_msg.size());
                     }
-                    std::string bcast_msg = 
-                            "[SYSTEM_BCAST] " + uname + " signed in!";
+                    timestamp = get_current_time();
+                    std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
+                                            uname + " signed in!";
                     broadcasting((const uint8_t *)(bcast_msg.c_str()), 
                                 bcast_msg.size());
                     continue;
                 }
-                secure_broadcasting(msg_body, msg_size);
+                // stat = 2
+                auto sender_uemail = this_client->get_bind_uid();
+                auto sender_uname = users.get_uname_by_uemail(sender_uemail);
+
+                std::string timestamp = get_current_time();
+                auto response_size = timestamp.size() + 1 + 
+                                    sender_uname->size() + 1 + msg_size;
+
+                std::vector<uint8_t> resp(response_size, ',');
+                offset = 0;
+                std::copy(timestamp.begin(), timestamp.end(), resp.begin());
+                offset += timestamp.size() + 1;
+                std::copy(sender_uname->begin(), sender_uname->end(), 
+                          resp.begin() + offset);
+                offset += sender_uname->size() + 1;
+                std::copy(msg_body, msg_body + msg_size, resp.begin() + offset);
+                //std::cout << "aaaaaaaaaaaaaaaa~~~~~~~~~~~~~" << msg_size << std::endl;
+                secure_broadcasting(resp.data(), resp.size());
             }
         }
     }
