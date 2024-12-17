@@ -34,6 +34,7 @@ constexpr char prompt[] = "Enter your input: ";
 
 std::atomic<bool> tui_running(false);
 std::atomic<bool> heartbeating(false);
+
 std::atomic<bool> send_msg_req(false);
 std::atomic<bool> heartbeat_req(false);
 std::atomic<bool> heartbeat_timeout(false);
@@ -56,6 +57,15 @@ enum client_errors {
     WINDOW_CREATION_FAILED,
     TUI_CORE_ERROR,
     HASH_PASSWORD_FAILED,
+};
+
+enum thread_errors {
+    T_NORMAL_RETURN = 0,
+    T_WINDOW_NULL,
+    T_SOCK_FD_INVALID,
+    T_NOT_HEARTBEATING,
+    T_HEARTBEAT_SENT_ERR,
+    T_SOCKET_RECV_ERR,
 };
 
 struct input_buffer {
@@ -498,16 +508,16 @@ public:
     }
 
     static void thread_heartbeat () {
+        // heartbeating was set to false, passive stop
+        // heartbeat timeout, aggressive stop
         while (heartbeating) {
             auto now = lc_utils::now_time();
             if (now - last_heartbeat_recv >= HEARTBEAT_TIMEOUT_SECS) {
                 heartbeat_timeout.store(true);
+                return;
             }
-            else {
-                if ((now % HEARTBEAT_INTERVAL_SECS == 0) || 
-                    ((now - last_heartbeat_sent) >= HEARTBEAT_INTERVAL_SECS)) 
-                    heartbeat_req.store(true);
-            }
+            if ((now - last_heartbeat_sent) >= HEARTBEAT_INTERVAL_SECS) 
+                heartbeat_req.store(true);
             std::this_thread::sleep_for(
                 std::chrono::seconds(HEARTBEAT_THREAD_SLEEP));
         }
@@ -519,15 +529,13 @@ public:
         const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
         int& thread_err) {
         
-        thread_err = 0;
+        thread_err = T_NORMAL_RETURN;
         if (top_win == nullptr || side_win == nullptr) {
-            thread_err = -1;
-            tui_running.store(false);
+            thread_err = T_WINDOW_NULL;
             return;
         }
         if (fd < 0) {
-            thread_err = 1;
-            tui_running.store(false);
+            thread_err = T_SOCK_FD_INVALID;
             return;
         }
         bool is_msg_recved = false;
@@ -550,7 +558,7 @@ public:
                 u.get_uname().c_str()); 
         wrefresh(top_win);
 
-        while (tui_running && heartbeating) {
+        while (tui_running) {
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
                 buff.recv_raw_buffer.size(), MSG_WAITALL, 
                 (struct sockaddr *)(&src_addr), (socklen_t *)&addr_len);
@@ -574,16 +582,12 @@ public:
                         if (heartbeat_req) {
                             if (!pack_heartbeat(s.get_cinfo_hash_bytes(),
                                 client_k.get_sign_sk(), hb_pack)) {
-                                thread_err = 3;
-                                tui_running.store(false);
-                                heartbeating.store(false);
+                                thread_err = T_HEARTBEAT_SENT_ERR;
                                 return;
                             }
                             if (simple_send_stc(fd, s, hb_pack.data(), 
                                 hb_pack.size()) < 0) {
-                                thread_err = 3;
-                                tui_running.store(false);
-                                heartbeating.store(false);
+                                thread_err = T_HEARTBEAT_SENT_ERR;
                                 return;
                             }
                             last_heartbeat_sent.store(lc_utils::now_time());
@@ -592,8 +596,7 @@ public:
                         continue;
                     }
                 }
-                thread_err = 5;
-                tui_running.store(false);
+                thread_err = T_SOCKET_RECV_ERR;
                 return;
             }
             if (bytes < CLIENT_RECV_MIN_BYTES) 
@@ -1436,9 +1439,9 @@ public:
         initscr();
         cbreak();
         noecho();
+        start_color();
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
-
         if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
             std::cout << "Window size too small (min: w x h " 
                       << (int)WIN_WIDTH_MIN << " x " << (int)WIN_HEIGHT_MIN
@@ -1447,12 +1450,12 @@ public:
             return close_client(WINDOW_SIZE_INVALID);
         }
 
-        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT, 
-                                width - SIDE_WIN_WIDTH, 0, 0);
-        WINDOW *bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH, 
-                                height - BOTTOM_HEIGHT, 0);
-        WINDOW *side_win = newwin(height, SIDE_WIN_WIDTH, 0, 
-                                width - SIDE_WIN_WIDTH);
+        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT - 2, 
+                                width - SIDE_WIN_WIDTH - 3, 1, 1);
+        WINDOW *bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
+                                height - BOTTOM_HEIGHT + 1, 1);
+        WINDOW *side_win = newwin(height - 2, SIDE_WIN_WIDTH, 1, 
+                                width - SIDE_WIN_WIDTH - 1);
 
         if (!top_win || !bottom_win || !side_win) {
             std::cerr << "Failed to create windows." << std::endl;
@@ -1480,13 +1483,16 @@ public:
         tui_running.store(true);
         heartbeating.store(true);
         heartbeat_timeout.store(false);
+
         int thread_err = 0;
         std::thread tui(std::bind(thread_run_core, top_win, side_win, 
             client_fd, buffer, session, server_pk_mgr, user, client_key,
             messages, thread_err));
         std::thread heartbeat(thread_heartbeat);
 
-        while (true) {
+        // heartbeat_timeout: timeout exit
+        // q!: normal exit
+        while (!heartbeat_timeout) {
             int ch = wgetch(bottom_win);
             if (ch == '\n' || input.bytes == input.ibuf.size() - 1) {
                 if (input.bytes == 0) 
@@ -1519,16 +1525,34 @@ public:
                 continue;
             }
         }
-        heartbeat.join();
-        tui.join();
-        tui_running.store(false);
+        
+        // Stop the heartbeating thread
         heartbeating.store(false);
+        // Stop the tui thread
+        tui_running.store(false);
+
+        // If timeout exit:
+        if (heartbeat_timeout) {
+            wprintw(top_win, "\nHeartbeat failed. Press any key to exit.\n");     
+            wrefresh(top_win);
+            input.clear();
+            refresh_input_win(bottom_win, prompt, input);
+            wgetch(bottom_win);
+        }
+        // Heartbeat should be joinable.
+        heartbeat.join();
+        // TUI should be joinable.
+        tui.join();
+
+        // Clear ncurses resources.
         delwin(top_win);
         delwin(bottom_win);
         delwin(side_win);
         endwin();
+
+        // Print thread errors.
         std::cout << parse_thread_err(thread_err) << std::endl;
-        if (thread_err == NORMAL_RETURN)
+        if (thread_err == T_NORMAL_RETURN)
             return true;
         last_error = TUI_CORE_ERROR;
         return false;
