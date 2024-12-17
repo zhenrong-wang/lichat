@@ -807,9 +807,6 @@ public:
         init_pair(1, COLOR_WHITE, COLOR_BLACK);
         init_pair(2, COLOR_YELLOW, COLOR_BLACK);
         init_pair(3, COLOR_CYAN, COLOR_BLACK);
-        //wattron(top_win, COLOR_PAIR(1));
-        //wattron(bottom_win, COLOR_PAIR(2));
-        //wattron(side_win, COLOR_PAIR(3));
         wbkgdset(top_win, COLOR_PAIR(1));
         wbkgdset(bottom_win, COLOR_PAIR(2));
         wbkgdset(side_win, COLOR_PAIR(3));
@@ -1511,7 +1508,7 @@ public:
         scrollok(bottom_win, TRUE);
         scrollok(side_win, TRUE);
 
-        //set_win_color(top_win, side_win, bottom_win);
+        set_win_color(top_win, side_win, bottom_win);
 
         // Print welcome.
         wprintw(top_win, welcome);
@@ -1555,7 +1552,8 @@ public:
             if (ch != '\n' && (isprint(ch) || ch == '\t')) {
                 input.ibuf[input.bytes] = ch;
                 ++ input.bytes;
-                refresh_input_win(bottom_win, ch);
+                input.ibuf[input.bytes] = '\0';
+                refresh_input_win(bottom_win, prompt, input);
                 continue;
             }
             if (ch == KEY_BACKSPACE) {
