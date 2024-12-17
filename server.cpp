@@ -1034,7 +1034,7 @@ public:
             unsigned long long unsign_len = 0, sign_len = 0;
             buffer.clear_buffer();
             auto bytes_recv = recvfrom(server_fd, buffer.recv_raw_buffer.data(), 
-                                    buffer.recv_raw_buffer.size(), MSG_WAITALL, 
+                                    buffer.recv_raw_buffer.size(), 0, 
                                     (struct sockaddr *)&client_addr, 
                                     (socklen_t *)&addr_len);
             buffer.recv_raw_bytes = bytes_recv;

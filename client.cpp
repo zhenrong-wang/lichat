@@ -49,6 +49,8 @@ enum client_errors {
     NORMAL_RETURN = 0,
     CLIENT_KEY_MGR_ERROR,
     SOCK_FD_INVALID,
+    SOCK_SETOPT_FAILED,
+    HANDSHAKE_TIMEOUT,
     MSG_SIGNING_FAILED,
     SERVER_PK_MGR_ERROR,
     SESSION_PREP_FAILED,
@@ -63,7 +65,7 @@ enum thread_errors {
     T_NORMAL_RETURN = 0,
     T_WINDOW_NULL,
     T_SOCK_FD_INVALID,
-    T_NOT_HEARTBEATING,
+    T_HEARTBEAT_TIME_OUT,
     T_HEARTBEAT_SENT_ERR,
     T_SOCKET_RECV_ERR,
 };
@@ -384,16 +386,18 @@ public:
     }
 
     std::string parse_thread_err (const int& thread_err) {
-        if (thread_err == 0) 
+        if (thread_err == T_NORMAL_RETURN) 
             return "Thread exit normally / gracefully.";
-        else if (thread_err == -1)
+        else if (thread_err == T_WINDOW_NULL)
             return "Some of the windows are null.";
-        else if (thread_err == 1)
+        else if (thread_err == T_SOCK_FD_INVALID)
             return "The provided socket fd is invalid";
-        else if (thread_err == 3)
-            return "Failed to sign and/or send heartbeat.";
-        else if (thread_err == 5)
+        else if (thread_err == T_SOCKET_RECV_ERR) 
             return "Socket communication error.";
+        else if (thread_err == T_HEARTBEAT_SENT_ERR) 
+            return "Failed to send heartbeat packets.";
+        else if (thread_err == T_HEARTBEAT_TIME_OUT)
+            return "Heartbeat timeout.";
         else
             return "Unknown thread error. Possibly a bug.";
     }
@@ -559,8 +563,14 @@ public:
         wrefresh(top_win);
 
         while (tui_running) {
+            if (heartbeat_timeout) {
+                wprintw(top_win, "\nHeartbeat failed. Press any key to exit.\n");     
+                wrefresh(top_win);
+                thread_err = T_HEARTBEAT_TIME_OUT;
+                return;
+            }
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
-                buff.recv_raw_buffer.size(), MSG_WAITALL, 
+                buff.recv_raw_buffer.size(), 0, 
                 (struct sockaddr *)(&src_addr), (socklen_t *)&addr_len);
             errno = 0;
             is_msg_recved = false;
@@ -776,22 +786,13 @@ public:
         return true;
     }
 
-    bool reset_input_win (WINDOW *win, const char *prompt) {
-        if (win == nullptr)
-            return false;
-        wclear(win);
-        if (prompt)
-            wprintw(win, prompt);
-        wrefresh(win);
-        return true;
-    }
-
     bool refresh_input_win (WINDOW *win, const char *prompt, 
         const input_buffer& input) {
 
         if(win == nullptr)
             return false;
         wclear(win);
+        wrefresh(win);
         if(prompt)
             wprintw(win, prompt);
         wprintw(win, input.ibuf.data());
@@ -799,6 +800,23 @@ public:
         return true;
     }
 
+    void set_win_color (WINDOW *top_win, WINDOW *side_win, WINDOW *bottom_win) {
+        if (!has_colors())
+            return;
+        start_color();
+        init_pair(1, COLOR_WHITE, COLOR_BLACK);
+        init_pair(2, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(3, COLOR_CYAN, COLOR_BLACK);
+        //wattron(top_win, COLOR_PAIR(1));
+        //wattron(bottom_win, COLOR_PAIR(2));
+        //wattron(side_win, COLOR_PAIR(3));
+        wbkgdset(top_win, COLOR_PAIR(1));
+        wbkgdset(bottom_win, COLOR_PAIR(2));
+        wbkgdset(side_win, COLOR_PAIR(3));
+        wrefresh(top_win);
+        wrefresh(bottom_win);
+        wrefresh(side_win);
+    }
     // Close server and possible FD
     bool close_client (int err) {
         last_error = err;
@@ -821,7 +839,7 @@ public:
         client_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (client_fd < 0) 
             return close_client(SOCK_FD_INVALID);
-        std::cout << "lichat client started." << std::endl;
+        std::cout << "lichat client started. Handshaking now ..." << std::endl;
         return true;
     }
 
@@ -982,8 +1000,17 @@ public:
         buffer.clear_buffer();
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
+        struct timeval tv;
+        tv.tv_sec = HANDSHAKE_TIMEOUT_SECS;
+        tv.tv_usec = 0;
+
+        if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, 
+            sizeof(tv)) < 0) {
+            return -127;
+        }
+
         auto ret = recvfrom(client_fd, buffer.recv_raw_buffer.data(), 
-                            buffer.recv_raw_buffer.size(), MSG_WAITALL, 
+                            buffer.recv_raw_buffer.size(), 0, 
                             (struct sockaddr *)(&src_addr), 
                             (socklen_t *)&addr_len);
         addr = src_addr;
@@ -1083,11 +1110,24 @@ public:
                 buffer.send_bytes = offset + signed_cid_cpk.size();
                 simple_send(session, buffer.send_buffer.data(), 
                             buffer.send_bytes);
-                session.sent_cinfo((buffer.send_buffer[0] == 0x00)); // 0x00: requested server key, 0x01: not requested server key
+
+                // 0x00: requested server key, 0x01: not requested server key
+                session.sent_cinfo((buffer.send_buffer[0] == 0x00));
                 continue;
             }
             if (status == 1 || status == 2 || status == 4) {
-                buffer.recv_raw_bytes = wait_server_response(msg_addr);
+                // Here the socket is blocking mode for reliability.
+                auto wait_res = wait_server_response(msg_addr);
+                if (wait_res == -127) {
+                    std::cout << "Failed to set socket option." << std::endl;
+                    return close_client(SOCK_SETOPT_FAILED);
+                }
+                else if (wait_res < 0) {
+                    std::cout << "Handshaking timeout (" 
+                        << HANDSHAKE_TIMEOUT_SECS << " secs)." << std::endl;
+                    return close_client(HANDSHAKE_TIMEOUT);
+                }
+                buffer.recv_raw_bytes = wait_res;
                 if (buffer.recved_insuff_bytes(CLIENT_RECV_MIN_BYTES) || 
                     buffer.recved_overflow()) 
                     continue; // If size is invalid, ommit.
@@ -1439,7 +1479,6 @@ public:
         initscr();
         cbreak();
         noecho();
-        start_color();
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
         if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
@@ -1458,11 +1497,11 @@ public:
                                 width - SIDE_WIN_WIDTH - 1);
 
         if (!top_win || !bottom_win || !side_win) {
-            std::cerr << "Failed to create windows." << std::endl;
             if (top_win) delwin(top_win);
             if (bottom_win) delwin(bottom_win);
             if (side_win) delwin(side_win);
             endwin();
+            std::cout << "Failed to create windows." << std::endl;
             return close_client(WINDOW_CREATION_FAILED);
         }
         // activate keypad for input
@@ -1471,6 +1510,8 @@ public:
         scrollok(top_win, TRUE);
         scrollok(bottom_win, TRUE);
         scrollok(side_win, TRUE);
+
+        //set_win_color(top_win, side_win, bottom_win);
 
         // Print welcome.
         wprintw(top_win, welcome);
@@ -1497,13 +1538,14 @@ public:
             if (ch == '\n' || input.bytes == input.ibuf.size() - 1) {
                 if (input.bytes == 0) 
                     continue;
+                input.ibuf[input.bytes] = '\0';
                 if (input.bytes == 2 && 
                     std::strcmp(input.ibuf.data(), "q!") == 0) {
                     tui_running.store(false);
                     break;
                 }
                 mtx.lock();
-                send_msg_body = std::string(input.ibuf.data(), input.bytes);
+                send_msg_body = std::string(input.ibuf.data());
                 mtx.unlock();
                 send_msg_req.store(true);
                 input.clear();
@@ -1525,20 +1567,13 @@ public:
                 continue;
             }
         }
-        
+        if (heartbeat_timeout) {
+            thread_err = T_HEARTBEAT_TIME_OUT;
+        }
         // Stop the heartbeating thread
         heartbeating.store(false);
         // Stop the tui thread
         tui_running.store(false);
-
-        // If timeout exit:
-        if (heartbeat_timeout) {
-            wprintw(top_win, "\nHeartbeat failed. Press any key to exit.\n");     
-            wrefresh(top_win);
-            input.clear();
-            refresh_input_win(bottom_win, prompt, input);
-            wgetch(bottom_win);
-        }
         // Heartbeat should be joinable.
         heartbeat.join();
         // TUI should be joinable.

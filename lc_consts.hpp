@@ -72,6 +72,9 @@ constexpr size_t HEARTBEAT_TIMEOUT_SECS = 180;
 constexpr size_t HEARTBEAT_THREAD_SLEEP = 1;
 constexpr size_t HEARTBEAT_BYTES = 1 + crypto_sign_BYTES + CIF_BYTES;
 
+// Handshake related
+constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
+
 // Some useful strings.
 constexpr char server_internal_fatal[] = "Server internal fatal error.\n";
 constexpr char restart_handshake[] = "Session failed. Restart handshake.\n";
