@@ -50,6 +50,22 @@
         "typeinfo": "cpp",
         "bit": "cpp",
         "set": "cpp",
-        "cstring": "cpp"
+        "cstring": "cpp",
+        "bitset": "cpp",
+        "regex": "cpp",
+        "condition_variable": "cpp",
+        "map": "cpp",
+        "shared_mutex": "cpp",
+        "csignal": "cpp",
+        "strstream": "cpp",
+        "codecvt": "cpp",
+        "complex": "cpp",
+        "list": "cpp",
+        "iomanip": "cpp",
+        "mutex": "cpp",
+        "cfenv": "cpp",
+        "typeindex": "cpp",
+        "variant": "cpp",
+        "*.ipp": "cpp"
     }
 }
