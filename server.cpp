@@ -778,19 +778,6 @@ public:
         return oss.str();
     }
 
-    static std::string get_current_time (void) {
-        auto now = std::chrono::system_clock::now();
-        std::time_t now_t = std::chrono::system_clock::to_time_t(now);
-        std::tm* now_tm = std::gmtime(&now_t);
-        std::ostringstream oss;
-        oss << (now_tm->tm_year + 1900) << '-' 
-            << (now_tm->tm_mon + 1) << '-'
-            << (now_tm->tm_mday) << '-'
-            << (now_tm->tm_hour) << ':' 
-            << (now_tm->tm_min) << ':' << (now_tm->tm_sec);
-        return oss.str();
-    }
-
     bool get_cinfo_by_uid (uint64_t& ret, const std::string& user_uid) {
         auto map = clients.get_ctx_map();
         for (auto it : map) {
@@ -1044,6 +1031,7 @@ public:
         while (true) {
             struct sockaddr_in client_addr;
             auto addr_len = sizeof(client_addr);
+            unsigned long long unsign_len = 0;
             buffer.clear_buffer();
             auto bytes_recv = recvfrom(server_fd, buffer.recv_raw_buffer.data(), 
                                     buffer.recv_raw_buffer.size(), MSG_WAITALL, 
@@ -1236,6 +1224,33 @@ public:
                 conns.delete_session(cinfo_hash); 
                 continue;
             }
+            // Heatbeat message, must be signed with the client_sign_secret_key
+            if (header == 0x1F) {
+                size_t expected_size = 1 + CIF_BYTES + crypto_sign_BYTES + 
+                                       sizeof(ok);
+                if (buffer.recv_raw_bytes != expected_size)
+                    continue;
+                std::array<uint8_t, CID_BYTES> recved_cif_bytes;
+                auto beg = buffer.recv_raw_buffer.begin();
+                offset = 1;
+                std::copy(beg + offset, beg + offset + CID_BYTES, 
+                          recved_cif_bytes.begin());
+                offset += CID_BYTES;
+                auto recved_cif = lc_utils::bytes_to_u64(recved_cif_bytes);
+                auto ptr_session = conns.get_session(recved_cif);
+                if (ptr_session == nullptr)
+                    continue; // Not a valid cif.
+                auto client_spk = ptr_session->get_client_sign_key();
+                if (crypto_sign_open(nullptr, &unsign_len, beg + offset,
+                    expected_size - offset, client_spk.data()))
+                    continue;  // Not a valid signature.
+                offset += crypto_sign_BYTES;
+                if (std::memcmp(beg + offset, ok, sizeof(ok)) != 0)
+                    continue; // Not a valid tail message.
+                // All the checks done, update the addr.
+                ptr_session->set_src_addr(client_addr);
+                continue;
+            }
             if (header == 0x10) {
                 size_t expected_min_size = 1 + CIF_BYTES + 
                         crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
@@ -1303,7 +1318,7 @@ public:
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
                         users.set_user_status(0, reg_info[0], 1);
-                        timestamp = get_current_time();
+                        timestamp = lc_utils::now_time_to_str();
                         std::string bcast_msg = 
                             timestamp + ",[SYSTEM_BCAST]," + reg_info[1] + 
                             " signed up and signed in!";
@@ -1350,14 +1365,14 @@ public:
                     uint64_t prev_cif = 0;
                     if (clients.clear_ctx_by_uid(cinfo_hash, uemail, prev_cif))
                     {
-                        timestamp = get_current_time();
+                        timestamp = lc_utils::now_time_to_str();
                         std::string system_msg = 
                             ",[SYSTEM]," + std::string(auto_signout);
                         simple_secure_send(0x10, prev_cif, 
                             (const uint8_t *)(system_msg.c_str()), 
                             system_msg.size());
                     }
-                    timestamp = get_current_time();
+                    timestamp = lc_utils::now_time_to_str();
                     std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
                                             uname + " signed in!";
                     broadcasting((const uint8_t *)(bcast_msg.c_str()), 
@@ -1368,7 +1383,7 @@ public:
                 auto sender_uemail = this_client->get_bind_uid();
                 auto sender_uname = users.get_uname_by_uemail(sender_uemail);
 
-                std::string timestamp = get_current_time();
+                std::string timestamp = lc_utils::now_time_to_str();
                 auto response_size = timestamp.size() + 1 + 
                                     sender_uname->size() + 1 + msg_size;
 
