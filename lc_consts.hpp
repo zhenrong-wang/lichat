@@ -33,7 +33,7 @@ constexpr size_t SPECIAL_CHAR_NUM = 26;
 
 constexpr size_t CLIENT_INPUT_RETRY = 3;
 
-constexpr size_t CLIENT_HEARTBEAT_INVERTAL = 180;
+constexpr size_t CLIENT_HEARTBEAT_INVERTAL = 10;
 constexpr size_t HEATBEAT_BYTES = 1 + CIF_BYTES + crypto_sign_BYTES + sizeof(ok);
 
 constexpr std::array<char, SPECIAL_CHAR_NUM> special_chars = {

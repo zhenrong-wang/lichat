@@ -1224,7 +1224,7 @@ public:
                 conns.delete_session(cinfo_hash); 
                 continue;
             }
-            // Heatbeat message, must be signed with the client_sign_secret_key
+            // Heartbeat message, must be signed with the client_sign_secret_key
             if (header == 0x1F) {
                 size_t expected_size = 1 + CIF_BYTES + crypto_sign_BYTES + 
                                        sizeof(ok);
