@@ -33,7 +33,9 @@ Code: https://github.com/zhenrong-wang/lichat\n";
 constexpr char prompt[] = "Enter your input: ";
 
 std::atomic<bool> tui_running(false);
+std::atomic<bool> heartbeating(false);
 std::atomic<bool> send_msg_req(false);
+std::atomic<bool> heartbeat_req(false);
 std::atomic<time_t> last_heatbeat(0);
 
 std::string send_msg_body;
@@ -478,14 +480,6 @@ public:
         return ret;
     }
 
-    static bool need_heartbeat () {
-        auto now = std::chrono::system_clock::now();
-        auto now_time_t = std::chrono::system_clock::to_time_t(now);
-        return ((now_time_t % CLIENT_HEARTBEAT_INVERTAL == 0) || 
-                ((now_time_t - last_heatbeat) > CLIENT_HEARTBEAT_INVERTAL));
-    }
-
-
     // Sign the "ok" and return.
     static bool pack_heatbeat (
         const std::array<uint8_t, CIF_BYTES>& cif_bytes,
@@ -504,6 +498,18 @@ public:
         return true;
     }
 
+    static void thread_heartbeat () {
+        while (heartbeating) {
+            auto now = lc_utils::now_time();
+            if((now % CLIENT_HEARTBEAT_INVERTAL == 0) || 
+               ((now - last_heatbeat) > CLIENT_HEARTBEAT_INVERTAL)) {
+                heartbeat_req.store(true);
+            }
+            
+            std::this_thread::sleep_for(std::chrono::seconds(60));
+        }
+    }
+
     static void thread_run_core (WINDOW *top_win, WINDOW *side_win, 
         const int fd, msg_buffer& buff, const client_session& s, 
         const client_server_pk_mgr& server_pk, const curr_user& u,
@@ -513,10 +519,12 @@ public:
         thread_err = 0;
         if (top_win == nullptr || side_win == nullptr) {
             thread_err = -1;
+            tui_running.store(false);
             return;
         }
         if (fd < 0) {
             thread_err = 1;
+            tui_running.store(false);
             return;
         }
         bool is_msg_recved = false;
@@ -545,31 +553,41 @@ public:
             if (bytes < 0) {
                 // Handling sending workloads.
                 if (!errno || errno == EWOULDBLOCK || errno == EAGAIN) {
-                    if (send_msg_req && send_msg_body.size() > 0) {
-                        mtx.lock();
-                        simple_secure_send_stc(fd, 0x10, s, buff, 
-                            (const uint8_t *)send_msg_body.c_str(), 
-                            send_msg_body.size());
-                        mtx.unlock();
-                    }
-                    if(send_msg_req) 
+                    if (send_msg_req) {
+                        if (send_msg_body.size() > 0) {
+                            mtx.lock();
+                            simple_secure_send_stc(fd, 0x10, s, buff, 
+                                (const uint8_t *)send_msg_body.c_str(), 
+                                send_msg_body.size());
+                            mtx.unlock();
+                        }
                         send_msg_req.store(false);
-                    if (need_heartbeat) {
-                        if (!pack_heatbeat(s.get_cinfo_hash_bytes(),
-                            client_k.get_sign_sk(), hb_pack)) {
-                            thread_err = 3;
-                            return;
-                        }
-                        if (simple_send_stc(fd, s, hb_pack.data(), 
-                            hb_pack.size()) != 0) {
-                            thread_err = 3;
-                            return;
-                        }
-                        last_heatbeat.store(lc_utils::now_time());
+                        continue;
                     }
-                    continue;
+                    else {
+                        if (heartbeat_req) {
+                            if (!pack_heatbeat(s.get_cinfo_hash_bytes(),
+                                client_k.get_sign_sk(), hb_pack)) {
+                                thread_err = 3;
+                                tui_running.store(false);
+                                heartbeating.store(false);
+                                return;
+                            }
+                            if (simple_send_stc(fd, s, hb_pack.data(), 
+                                hb_pack.size()) < 0) {
+                                thread_err = 3;
+                                tui_running.store(false);
+                                heartbeating.store(false);
+                                return;
+                            }
+                            last_heatbeat.store(lc_utils::now_time());
+                            heartbeat_req.store(false);
+                        }
+                        continue;
+                    }
                 }
                 thread_err = 5;
+                tui_running.store(false);
                 return;
             }
             if (bytes < CLIENT_RECV_MIN_BYTES) 
@@ -1436,10 +1454,12 @@ public:
         wrefresh(side_win);
 
         tui_running.store(true);
+        heartbeating.store(true);
         int thread_err = 0;
         std::thread tui(std::bind(thread_run_core, top_win, side_win, 
             client_fd, buffer, session, server_pk_mgr, user, client_key,
             messages, thread_err));
+        std::thread heartbeat(thread_heartbeat);
 
         while (true) {
             int ch = wgetch(bottom_win);
@@ -1474,7 +1494,10 @@ public:
                 continue;
             }
         }
+        heartbeat.join();
         tui.join();
+        tui_running.store(false);
+        heartbeating.store(false);
         delwin(top_win);
         delwin(bottom_win);
         delwin(side_win);
