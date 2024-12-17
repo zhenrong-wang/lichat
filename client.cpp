@@ -34,6 +34,7 @@ constexpr char prompt[] = "Enter your input: ";
 
 std::atomic<bool> tui_running(false);
 std::atomic<bool> send_msg_req(false);
+std::atomic<time_t> last_heatbeat(0);
 
 std::string send_msg_body;
 std::mutex mtx;
@@ -48,7 +49,7 @@ enum client_errors {
     UNBLOCK_SOCK_FAILED,
     WINDOW_SIZE_INVALID,
     WINDOW_CREATION_FAILED,
-    TEXT_UI_ERROR,
+    TUI_CORE_ERROR,
     HASH_PASSWORD_FAILED,
 };
 
@@ -367,6 +368,21 @@ public:
             return "Unknown server error.";
     }
 
+    std::string parse_thread_err (const int& thread_err) {
+        if (thread_err == 0) 
+            return "Thread exit normally / gracefully.";
+        else if (thread_err == -1)
+            return "Some of the windows are null.";
+        else if (thread_err == 1)
+            return "The provided socket fd is invalid";
+        else if (thread_err == 3)
+            return "Failed to sign and/or send heartbeat.";
+        else if (thread_err == 5)
+            return "Socket communication error.";
+        else
+            return "Unknown thread error. Possibly a bug.";
+    }
+
     bool nonblock_socket () {
         int flags = fcntl(client_fd, F_GETFL, 0);
         if (flags == -1)
@@ -462,10 +478,37 @@ public:
         return ret;
     }
 
-    static void thread_run_tui (WINDOW *top_win, WINDOW *side_win, const int fd, 
-        msg_buffer& buff, const client_session& s, 
+    static bool need_heartbeat () {
+        auto now = std::chrono::system_clock::now();
+        auto now_time_t = std::chrono::system_clock::to_time_t(now);
+        return ((now_time_t % CLIENT_HEARTBEAT_INVERTAL == 0) || 
+                ((now_time_t - last_heatbeat) > CLIENT_HEARTBEAT_INVERTAL));
+    }
+
+
+    // Sign the "ok" and return.
+    static bool pack_heatbeat (
+        const std::array<uint8_t, CIF_BYTES>& cif_bytes,
+        const std::array<uint8_t, crypto_sign_SECRETKEYBYTES>& client_sign_sk,
+        std::array<uint8_t, HEATBEAT_BYTES>& packet) {
+        
+        packet[0] = 0x1F;
+        size_t offset = 1;
+        auto beg = packet.begin();
+        std::copy(cif_bytes.begin(), cif_bytes.end(), beg + offset);
+        offset += CIF_BYTES;
+        unsigned long long sign_len = 0;
+        if (crypto_sign(packet.data() + offset, &sign_len, ok, sizeof(ok), 
+            client_sign_sk.data()) != 0) 
+            return false;
+        return true;
+    }
+
+    static void thread_run_core (WINDOW *top_win, WINDOW *side_win, 
+        const int fd, msg_buffer& buff, const client_session& s, 
         const client_server_pk_mgr& server_pk, const curr_user& u,
-        std::vector<std::string>& msg_vec, int& thread_err) {
+        const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
+        int& thread_err) {
         
         thread_err = 0;
         if (top_win == nullptr || side_win == nullptr) {
@@ -485,6 +528,7 @@ public:
         auto aes_beg = buff.recv_aes_buffer.begin();
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
+        std::array<uint8_t, HEATBEAT_BYTES> hb_pack;
 
         wprintw(top_win, "\n[SYSTEM] Your unique email: %s\n", 
                 u.get_uemail().c_str());     
@@ -499,6 +543,7 @@ public:
             errno = 0;
             is_msg_recved = false;
             if (bytes < 0) {
+                // Handling sending workloads.
                 if (!errno || errno == EWOULDBLOCK || errno == EAGAIN) {
                     if (send_msg_req && send_msg_body.size() > 0) {
                         mtx.lock();
@@ -509,9 +554,22 @@ public:
                     }
                     if(send_msg_req) 
                         send_msg_req.store(false);
+                    if (need_heartbeat) {
+                        if (!pack_heatbeat(s.get_cinfo_hash_bytes(),
+                            client_k.get_sign_sk(), hb_pack)) {
+                            thread_err = 3;
+                            return;
+                        }
+                        if (simple_send_stc(fd, s, hb_pack.data(), 
+                            hb_pack.size()) != 0) {
+                            thread_err = 3;
+                            return;
+                        }
+                        last_heatbeat.store(lc_utils::now_time());
+                    }
                     continue;
                 }
-                thread_err = 3;
+                thread_err = 5;
                 return;
             }
             if (bytes < CLIENT_RECV_MIN_BYTES) 
@@ -1379,9 +1437,9 @@ public:
 
         tui_running.store(true);
         int thread_err = 0;
-        std::thread tui(std::bind(thread_run_tui, top_win, side_win, 
-            client_fd, buffer, session, server_pk_mgr, user, messages, 
-            thread_err));
+        std::thread tui(std::bind(thread_run_core, top_win, side_win, 
+            client_fd, buffer, session, server_pk_mgr, user, client_key,
+            messages, thread_err));
 
         while (true) {
             int ch = wgetch(bottom_win);
@@ -1421,7 +1479,11 @@ public:
         delwin(bottom_win);
         delwin(side_win);
         endwin();
-        return (thread_err != 0) ? TEXT_UI_ERROR : NORMAL_RETURN;
+        std::cout << parse_thread_err(thread_err) << std::endl;
+        if (thread_err == NORMAL_RETURN)
+            return true;
+        last_error = TUI_CORE_ERROR;
+        return false;
     }
 };
 
@@ -1456,5 +1518,9 @@ int main (int argc, char **argv) {
                   << new_client.get_last_error() << std::endl;
         return 3;
     }
-    return new_client.run_client();
+    if (!new_client.run_client()) {
+        std::cout << "Client running failure. Error Code: " 
+                  << new_client.get_last_error() << std::endl;
+    }
+    return new_client.get_last_error();
 }
