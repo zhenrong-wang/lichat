@@ -1557,10 +1557,9 @@ public:
                 continue;
             }
             if (ch == KEY_BACKSPACE) {
-                if (input.bytes > 0) {
+                if (input.bytes > 0) 
                     -- input.bytes;
-                    input.ibuf[input.bytes] = '\0';
-                }
+                input.ibuf[input.bytes] = '\0';
                 refresh_input_win(bottom_win, prompt, input);
                 continue;
             }
