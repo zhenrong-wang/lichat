@@ -99,7 +99,7 @@ constexpr char tag_user[MSG_ATTR_LEN] = {'~', '-', '@'};
 constexpr char user_delim = ':';
 
 constexpr size_t WIN_HEIGHT_MIN = 16;
-constexpr size_t WIN_WIDTH_MIN = 32;
+constexpr size_t WIN_WIDTH_MIN = 48;
 constexpr size_t SIDE_WIN_WIDTH = 16;
 constexpr size_t BOTTOM_HEIGHT = 8;
 

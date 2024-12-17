@@ -476,7 +476,7 @@ public:
             thread_err = 1;
             return;
         }
-        bool is_msg_recved = false, quit = false;
+        bool is_msg_recved = false;
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
         size_t offset = 0;
@@ -486,8 +486,7 @@ public:
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
 
-        wmove(top_win, getcury(top_win), 0);
-        wprintw(top_win, "    \n[SYSTEM] Your unique email: %s\n", 
+        wprintw(top_win, "\n[SYSTEM] Your unique email: %s\n", 
                 u.get_uemail().c_str());     
         wprintw(top_win, "[SYSTEM] Your unique username: %s\n\n", 
                 u.get_uname().c_str()); 
@@ -559,58 +558,113 @@ public:
                             recved_cif.begin());
                 if (sid != recved_sid || cif != recved_cif)
                     continue;
-                std::string msg_str(
-                    (const char *)(aes_beg + SID_BYTES + CIF_BYTES), 
+                std::string msg_body((char *)(aes_beg + SID_BYTES + CIF_BYTES), 
                     buff.recv_aes_bytes - SID_BYTES - CIF_BYTES);
-                msg_vec.push_back(msg_str);
+                msg_vec.push_back(msg_body);
                 is_msg_recved = true;
             }
-            if (is_msg_recved) {
-                wmove(top_win, getcury(top_win), 0);
-                wprintw(top_win, "    \n%s\n\n", msg_vec.back().c_str());
-                wrefresh(top_win);
-            }
+            if (is_msg_recved) 
+                fmt_prnt_msg(top_win, msg_vec.back(), u.get_uname());
         }
     }
 
-    static int print_self_msg (WINDOW *win, const input_buffer& input) {
+    // Every RAW message must start with at least:
+    // timestamp,uname(or system), msg_body
+    // Currenty this only handles narrow chars, not wide chars.
+
+    static int fmt_for_print (std::string& out, const std::string& in, 
+        const int col_start, const int col_end, const int win_width,
+        const bool left_align) {
+        if (in.empty())
+            return -1;
+        if (win_width <= 2 || col_start < 0 || col_end <= 0)
+            return 1;
+        if (col_end <= col_start || col_start >= win_width || col_end == 0)
+            return 1;
+        size_t line_len = static_cast<size_t>(col_end - col_start);
+        size_t prefix_len = static_cast<size_t>(col_start); // Should be non-negative.
+        size_t suffix_len = static_cast<size_t>(win_width - col_end); // Should be non-negative.
+        std::string prefix(prefix_len, ' ');
+        std::string suffix(suffix_len, ' ');
+
+        // Handle single line input.
+        if (in.size() <= line_len) {
+            std::string padding(line_len - in.size(), ' ');
+            if (left_align)
+                out = prefix + in + padding + suffix;
+            else 
+                out = prefix + padding + in + suffix;
+            return 0;
+        }
+        
+        // Handle multiple line input.
+        // All lines would be left aligned.
+        size_t lines = ((in.size() % line_len) == 0) ? (in.size() / line_len)
+                       : (in.size() / line_len + 1);
+        out.clear();
+        size_t pos = 0;
+        for (size_t i = 0; i < lines - 1; ++ i) {
+            out += (prefix + in.substr(pos, line_len) + suffix);
+            pos += line_len;
+        }
+        std::string padding((line_len - in.size() % line_len), ' ');
+        out += prefix + in.substr(pos) + padding + suffix;
+        return 0;
+    }
+
+    static int fmt_prnt_msg (WINDOW *win, const std::string& raw_msg,
+        const std::string& uname) {
+
         if (win == nullptr)
             return -1;
-        if (input.bytes == 0 || input.bytes >= input.ibuf.size())
+        if (raw_msg.size() == 0)
             return 1;
-        int height = 0, width = 0, pos = 0;
-        getmaxyx(win, height, width);
-        int col_start = (width < 2) ? 0 : (width / 2);
-        int line_len = width - col_start;
-        int space_len_fixed = col_start;
-
-        const std::string prefix(space_len_fixed, ' ');
-        const std::string you("You:");
-
-        std::string str = prefix;
-        str += std::string(line_len - you.size(), ' ') + you;
-        size_t lines = (input.bytes % line_len == 0) ? (input.bytes / line_len)
-                       : (input.bytes / line_len + 1);
+        auto parsed_msg = lc_utils::split_buffer((uint8_t *)raw_msg.data(), 
+                          raw_msg.size(), ',', 3);
+        if (parsed_msg.size() < 3)
+            return 3; // Not a valid message
+        //wprintw(win, "%s\n", raw_msg.c_str());
+        //wrefresh(win);
         
-        // If only single line, align to the right side.
-        if (lines == 1) {
-            str += prefix;
-            str += (std::string(line_len - input.bytes, ' ') + 
-                    std::string(input.ibuf.data(), input.bytes));
+        std::string timestmp = parsed_msg[0];
+        std::string msg_uname = parsed_msg[1];
+        std::string bare_msg = raw_msg.substr(parsed_msg[0].size() + 1 + 
+                                              parsed_msg[1].size() + 1);
+        
+        if (bare_msg.empty())
+            return 5;
+
+        int height = 0, width = 0, pos = 0;
+
+        // Important: before running the tui, we have checked the width is >=
+        // min_width, which is 48. So the top_win width should be at least 32.
+        // So the self_col_start >= 16; other_col_end >= 24.
+        // So the construction of std::string(size, char) should work because
+        // the provided size are positive. Although without strict check.
+        getmaxyx(win, height, width);
+        int col_start, col_end;
+        std::string fmt_name, fmt_timestmp, fmt_msg;
+        bool left_align = true;
+
+        if (msg_uname == uname) {
+            col_start = (width < 2) ? 0 : (width / 2); // value >= 0
+            col_end = width;
+            left_align = false;
+            fmt_for_print(fmt_name, std::string("You:"), col_start, col_end, 
+                          width, left_align);
         }
         else {
-            for (size_t i = 0; i < lines - 1; ++ i) {
-                str += prefix;
-                str += (std::string(input.ibuf.data() + pos, line_len));
-                pos += line_len;
-            }
-            str += prefix;
-            str += (std::string(input.ibuf.data() + pos, input.bytes - pos)
-                    + std::string(line_len - (input.bytes - pos), ' '));
+            col_start = 0;
+            col_end = (width * 3 / 4);
+            fmt_for_print(fmt_name, msg_uname, col_start, col_end, width, 
+                          left_align);
         }
-        
-        wmove(win, getcury(win), 0);
-        wprintw(win, "%s\n", str.c_str());
+        fmt_for_print(fmt_timestmp, timestmp, col_start, col_end, width, 
+                      left_align);
+        fmt_for_print(fmt_msg, bare_msg, col_start, col_end, width, left_align);
+
+        std::string fmt_lines = fmt_name + fmt_timestmp + fmt_msg;
+        wprintw(win, "\n%s\n", fmt_lines.c_str());
         wrefresh(win);
         return 0;
     }
@@ -1343,8 +1397,8 @@ public:
                 send_msg_body = std::string(input.ibuf.data(), input.bytes);
                 mtx.unlock();
                 send_msg_req.store(true);
-                reset_input_win(bottom_win, prompt);
                 input.clear();
+                refresh_input_win(bottom_win, prompt, input);
                 continue;
             }
             if (ch != '\n' && (isprint(ch) || ch == '\t')) {
