@@ -72,7 +72,9 @@ struct input_buffer {
     std::array<char, INPUT_BUFF_SIZE> ibuf;
     size_t bytes;
     
-    input_buffer () : bytes(0) {}
+    input_buffer () : bytes(0) {
+        std::memset(ibuf.data(), '\0', ibuf.size());
+    }
 };
 
 class curr_user {
@@ -491,7 +493,6 @@ public:
         return ret;
     }
 
-    // Sign the "ok" and return.
     static bool pack_heartbeat (
         const std::array<uint8_t, CIF_BYTES>& cif_bytes,
         const std::array<uint8_t, crypto_sign_SECRETKEYBYTES>& client_sign_sk,
@@ -541,8 +542,8 @@ public:
         auto addr_len = sizeof(src_addr);
         size_t offset = 0;
         unsigned long long unsign_len = 0, aes_decrypted_len = 0;
-        auto raw_beg = buff.recv_raw_buffer.begin();
-        auto aes_beg = buff.recv_aes_buffer.begin();
+        auto raw_beg = buff.recv_raw_buffer.data();
+        auto aes_beg = buff.recv_aes_buffer.data();
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
@@ -652,18 +653,22 @@ public:
                 buff.recv_aes_bytes = aes_decrypted_len;
                 if (!res) 
                     continue;
+                // Reading aes buffer.
                 offset = 0;
                 std::copy(aes_beg + offset, aes_beg + offset + SID_BYTES, 
                             recved_sid.begin());
                 offset += SID_BYTES;
                 std::copy(aes_beg + offset, aes_beg + offset + CIF_BYTES,
                             recved_cif.begin());
+                offset += CIF_BYTES;
                 if (sid != recved_sid || cif != recved_cif)
                     continue;
-                std::string msg_body((char *)(aes_beg + SID_BYTES + CIF_BYTES), 
-                    buff.recv_aes_bytes - SID_BYTES - CIF_BYTES);
+                std::string msg_body((char *)(aes_beg + offset), 
+                    aes_decrypted_len - offset);
                 msg_vec.push_back(msg_body);
                 is_msg_recved = true;
+                //wprintw(top_win, "%s~~~~~~~~~~~~~~~~~\n", msg_body.c_str());
+                //wrefresh(top_win);
             }
             if (is_msg_recved) 
                 fmt_prnt_msg(top_win, msg_vec.back(), u.get_uname());
@@ -766,36 +771,33 @@ public:
         fmt_for_print(fmt_msg, bare_msg, col_start, col_end, width, left_align);
 
         std::string fmt_lines = fmt_name + fmt_timestmp + fmt_msg;
-        wprintw(win, "\n%s", fmt_lines.c_str());
+        wprintw(win, "%s\n", fmt_lines.c_str());
         wrefresh(win);
         return 0;
     }
 
-    bool clear_input_win (WINDOW *win) {
-        int h, w;
-        getmaxyx(win, h, w);
-        if (win == nullptr || h < 0 || w < 0)
-            return false;
-        std::string padding(h * w, ' ');
-        wprintw(win, padding.c_str());
-        wmove(win, 0, 0);
+    void clear_input(WINDOW *win, const std::string& prompt) {
+        if (win == nullptr) 
+            return;
+        int w = getmaxx(win);
+        if (w <= 0) 
+            return;
+        int start_y = prompt.size() / w, start_x = prompt.size() % w;
+        wmove(win, start_y, start_x);
+        wclrtobot(win);
         wrefresh(win);
-        return true;
     }
 
-    bool refresh_input_win (WINDOW *win, const std::string& prompt, 
+    bool refresh_input (WINDOW *win, const std::string& prompt, 
         const input_buffer& input) {
-
         if (win == nullptr)
             return false;
-        wclear(win);
-        if (input.bytes > 0) {
-            wprintw(win, "%s%s", prompt.c_str(), input.ibuf.data());
-            return true;
-        }
-        if (!clear_input_win(win))
-            return false;
-        wprintw(win, "%s", prompt.c_str());
+        int w = getmaxx(win);
+        int start_y = prompt.size() / w, start_x = prompt.size() % w;
+        wmove(win, start_y, start_x);
+        wclrtobot(win);
+        mvwprintw(win, start_y, start_x, "%s [chars: %d]", input.ibuf.data(), 
+                input.bytes);
         wrefresh(win);
         return true;
     }
@@ -1486,10 +1488,10 @@ public:
             return close_client(WINDOW_SIZE_INVALID);
         }
 
-        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT - 2, 
+        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT - 3, 
                                 width - SIDE_WIN_WIDTH - 3, 1, 1);
         WINDOW *bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
-                                height - BOTTOM_HEIGHT + 1, 1);
+                                height - BOTTOM_HEIGHT - 1, 1);
         WINDOW *side_win = newwin(height - 2, SIDE_WIN_WIDTH, 1, 
                                 width - SIDE_WIN_WIDTH - 1);
 
@@ -1533,11 +1535,12 @@ public:
         // q!: normal exit
         while (!heartbeat_timeout) {
             int ch = wgetch(bottom_win);
-            if (ch == '\n' || input.bytes == input.ibuf.size() - 1) {
+            if (ch == '\n' || ch == '\r' || 
+                input.bytes == input.ibuf.size() - 1) {
                 if (input.bytes == 0) 
                     continue;
-                if (input.bytes == 2 && 
-                    std::strcmp(input.ibuf.data(), "q!") == 0) {
+                if (input.bytes == 3 && 
+                    std::strcmp(input.ibuf.data(), ":q!") == 0) {
                     tui_running.store(false);
                     break;
                 }
@@ -1545,24 +1548,30 @@ public:
                 send_msg_body = std::string(input.ibuf.data());
                 mtx.unlock();
                 send_msg_req.store(true);
-                std::memset(input.ibuf.data(), '\0', input.bytes + 1);
+                std::memset(input.ibuf.data(), '\0', input.bytes);
                 input.bytes = 0;
-                refresh_input_win(bottom_win, prompt, input);
+                clear_input(bottom_win, prompt);
                 continue;
             }
             if (ch != '\n' && (isprint(ch) || ch == '\t')) {
-                input.ibuf[input.bytes] = ch;
-                ++ input.bytes;
-                input.ibuf[input.bytes] = '\0';
-                refresh_input_win(bottom_win, prompt, input);
+                if (ch == '\t') {
+                    for (size_t i = 0; i < 4; ++ i) {
+                        input.ibuf[input.bytes] = ' ';
+                        ++ input.bytes;
+                    }
+                }
+                else {
+                    input.ibuf[input.bytes] = ch;
+                    ++ input.bytes;
+                }
+                refresh_input(bottom_win, prompt, input);
                 continue;
             }
             if (ch == KEY_BACKSPACE) {
                 if (input.bytes > 0) 
                     -- input.bytes;
                 input.ibuf[input.bytes] = '\0';
-                refresh_input_win(bottom_win, prompt, input);
-                continue;
+                refresh_input(bottom_win, prompt, input);
             }
         }
         if (heartbeat_timeout) {

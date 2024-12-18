@@ -9,7 +9,7 @@
 constexpr size_t WIN_HEIGHT_MIN = 16;
 constexpr size_t WIN_WIDTH_MIN = 48;
 constexpr size_t SIDE_WIN_WIDTH = 16;
-constexpr size_t BOTTOM_HEIGHT = 8;
+constexpr size_t BOTTOM_HEIGHT = 6;
 
 // Critical bytes
 constexpr uint8_t CID_BYTES = 8;
