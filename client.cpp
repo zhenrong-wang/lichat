@@ -758,7 +758,7 @@ public:
         else {
             col_start = 0;
             col_end = (width * 3 / 4);
-            fmt_for_print(fmt_name, msg_uname, col_start, col_end, width, 
+            fmt_for_print(fmt_name, msg_uname + ":", col_start, col_end, width, 
                           left_align);
         }
         fmt_for_print(fmt_timestmp, timestmp, col_start, col_end, width, 
@@ -771,16 +771,31 @@ public:
         return 0;
     }
 
+    bool clear_input_win (WINDOW *win) {
+        int h, w;
+        getmaxyx(win, h, w);
+        if (win == nullptr || h < 0 || w < 0)
+            return false;
+        std::string padding(h * w, ' ');
+        wprintw(win, padding.c_str());
+        wmove(win, 0, 0);
+        wrefresh(win);
+        return true;
+    }
+
     bool refresh_input_win (WINDOW *win, const std::string& prompt, 
         const input_buffer& input) {
 
         if (win == nullptr)
             return false;
         wclear(win);
-        if (input.bytes > 0) 
+        if (input.bytes > 0) {
             wprintw(win, "%s%s", prompt.c_str(), input.ibuf.data());
-        else 
-            wprintw(win, "%s", prompt.c_str());
+            return true;
+        }
+        if (!clear_input_win(win))
+            return false;
+        wprintw(win, "%s", prompt.c_str());
         wrefresh(win);
         return true;
     }

@@ -1395,7 +1395,9 @@ public:
                           resp.begin() + offset);
                 offset += sender_uname->size() + 1;
                 std::copy(msg_body, msg_body + msg_size, resp.begin() + offset);
-                //std::cout << "aaaaaaaaaaaaaaaa~~~~~~~~~~~~~" << msg_size << std::endl;
+                //std::cout << std::endl 
+                //          << std::string((char *)resp.data(), resp.size()) 
+                //          << std::endl << std::endl;
                 secure_broadcasting(resp.data(), resp.size());
             }
         }
