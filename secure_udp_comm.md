@@ -1,15 +1,20 @@
 # How To Make UDP Communications Secure?
 
-The current udp_chatroom is not encrypted, super bad for secure or privacy. Here is a design to make it secure, to be discussed.
+This is a design to make UDP communication between a communication pair (we can call it `client` and `server`) secure.
 
 # 1. Prerequisites
 
-Client manages its Curve25519 **key pair**. Server manages its Curve25519 **key pair**. They are:
+There are 2 key pairs at client side and server side: `curve25519` for key exchange and `ed25519` for signature.
 
-- **Client Public Key:** `client_public_key`
-- **Client Private Key:** `client_private_key`
-- **Server Public Key:** `server_public_key`
-- **Server Private Key:** `server_private_key`
+At Client Side: `client_crypto.pub, client_crypto.sec` and `client_sign.pub, client_sign.sec`.
+
+At Server Side: `server_crypto.pub, server_crypto.sec` and `server_sign.pub, server_sign.sec`.
+
+The `*_crypto.pub` and `*_crypto.sec` are public key and secret key of a curve25519 key pair.
+
+The `*_sign.pub` and `*_sign.sec` are public and secret key of a ed25519 key pair.
+
+The `*.sec` files are **secret keys** and would not be exposed to anyone or anywhere else.
 
 # 2. Communication Process
 

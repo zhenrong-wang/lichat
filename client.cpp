@@ -30,10 +30,15 @@ constexpr char welcome[] = "\nWelcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
-constexpr char prompt[] = "Enter your input: ";
-
 std::atomic<bool> tui_running(false);
+std::atomic<bool> heartbeating(false);
+
 std::atomic<bool> send_msg_req(false);
+std::atomic<bool> heartbeat_req(false);
+std::atomic<bool> heartbeat_timeout(false);
+
+std::atomic<time_t> last_heartbeat_sent(0);
+std::atomic<time_t> last_heartbeat_recv(0);
 
 std::string send_msg_body;
 std::mutex mtx;
@@ -42,14 +47,25 @@ enum client_errors {
     NORMAL_RETURN = 0,
     CLIENT_KEY_MGR_ERROR,
     SOCK_FD_INVALID,
+    SOCK_SETOPT_FAILED,
+    HANDSHAKE_TIMEOUT,
     MSG_SIGNING_FAILED,
     SERVER_PK_MGR_ERROR,
     SESSION_PREP_FAILED,
     UNBLOCK_SOCK_FAILED,
     WINDOW_SIZE_INVALID,
     WINDOW_CREATION_FAILED,
-    TEXT_UI_ERROR,
+    TUI_CORE_ERROR,
     HASH_PASSWORD_FAILED,
+};
+
+enum thread_errors {
+    T_NORMAL_RETURN = 0,
+    T_WINDOW_NULL,
+    T_SOCK_FD_INVALID,
+    T_HEARTBEAT_TIME_OUT,
+    T_HEARTBEAT_SENT_ERR,
+    T_SOCKET_RECV_ERR,
 };
 
 struct input_buffer {
@@ -57,10 +73,6 @@ struct input_buffer {
     size_t bytes;
     
     input_buffer () : bytes(0) {}
-    void clear () {
-        std::memset (ibuf.data(), 0, bytes);
-        bytes = 0;
-    }
 };
 
 class curr_user {
@@ -367,6 +379,23 @@ public:
             return "Unknown server error.";
     }
 
+    std::string parse_thread_err (const int& thread_err) {
+        if (thread_err == T_NORMAL_RETURN) 
+            return "Thread exit normally / gracefully.";
+        else if (thread_err == T_WINDOW_NULL)
+            return "Some of the windows are null.";
+        else if (thread_err == T_SOCK_FD_INVALID)
+            return "The provided socket fd is invalid";
+        else if (thread_err == T_SOCKET_RECV_ERR) 
+            return "Socket communication error.";
+        else if (thread_err == T_HEARTBEAT_SENT_ERR) 
+            return "Failed to send heartbeat packets.";
+        else if (thread_err == T_HEARTBEAT_TIME_OUT)
+            return "Heartbeat timeout.";
+        else
+            return "Unknown thread error. Possibly a bug.";
+    }
+
     bool nonblock_socket () {
         int flags = fcntl(client_fd, F_GETFL, 0);
         if (flags == -1)
@@ -462,18 +491,49 @@ public:
         return ret;
     }
 
-    static void thread_run_tui (WINDOW *top_win, WINDOW *side_win, const int fd, 
-        msg_buffer& buff, const client_session& s, 
-        const client_server_pk_mgr& server_pk, const curr_user& u,
-        std::vector<std::string>& msg_vec, int& thread_err) {
+    // Sign the "ok" and return.
+    static bool pack_heartbeat (
+        const std::array<uint8_t, CIF_BYTES>& cif_bytes,
+        const std::array<uint8_t, crypto_sign_SECRETKEYBYTES>& client_sign_sk,
+        std::array<uint8_t, HEARTBEAT_BYTES>& packet) {
         
-        thread_err = 0;
+        packet[0] = 0x1F;
+        unsigned long long sign_len = 0;
+        if (crypto_sign(packet.data() + 1, &sign_len, cif_bytes.data(), 
+            cif_bytes.size(), client_sign_sk.data()) != 0) 
+            return false;
+        return true;
+    }
+
+    static void thread_heartbeat () {
+        // heartbeating was set to false, passive stop
+        // heartbeat timeout, aggressive stop
+        while (heartbeating) {
+            auto now = lc_utils::now_time();
+            if (now - last_heartbeat_recv >= HEARTBEAT_TIMEOUT_SECS) {
+                heartbeat_timeout.store(true);
+                return;
+            }
+            if ((now - last_heartbeat_sent) >= HEARTBEAT_INTERVAL_SECS) 
+                heartbeat_req.store(true);
+            std::this_thread::sleep_for(
+                std::chrono::seconds(HEARTBEAT_THREAD_SLEEP));
+        }
+    }
+
+    static void thread_run_core (WINDOW *top_win, WINDOW *side_win, 
+        const int fd, msg_buffer& buff, client_session& s, 
+        const client_server_pk_mgr& server_pk, const curr_user& u,
+        const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
+        int& thread_err) {
+        
+        thread_err = T_NORMAL_RETURN;
         if (top_win == nullptr || side_win == nullptr) {
-            thread_err = -1;
+            thread_err = T_WINDOW_NULL;
             return;
         }
         if (fd < 0) {
-            thread_err = 1;
+            thread_err = T_SOCK_FD_INVALID;
             return;
         }
         bool is_msg_recved = false;
@@ -485,6 +545,10 @@ public:
         auto aes_beg = buff.recv_aes_buffer.begin();
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
+        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
+        std::array<uint8_t, SID_BYTES> recved_sid;
+        std::array<uint8_t, CIF_BYTES> recved_cif;
+        std::array<uint8_t, HEARTBEAT_BYTES> hb_pack;
 
         wprintw(top_win, "\n[SYSTEM] Your unique email: %s\n", 
                 u.get_uemail().c_str());     
@@ -493,32 +557,57 @@ public:
         wrefresh(top_win);
 
         while (tui_running) {
+            if (heartbeat_timeout) {
+                wprintw(top_win, "\nHeartbeat failed. Press any key to exit.\n");     
+                wrefresh(top_win);
+                thread_err = T_HEARTBEAT_TIME_OUT;
+                return;
+            }
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
-                buff.recv_raw_buffer.size(), MSG_WAITALL, 
+                buff.recv_raw_buffer.size(), 0, 
                 (struct sockaddr *)(&src_addr), (socklen_t *)&addr_len);
             errno = 0;
             is_msg_recved = false;
             if (bytes < 0) {
+                // Handling sending workloads.
                 if (!errno || errno == EWOULDBLOCK || errno == EAGAIN) {
-                    if (send_msg_req && send_msg_body.size() > 0) {
-                        mtx.lock();
-                        simple_secure_send_stc(fd, 0x10, s, buff, 
-                            (const uint8_t *)send_msg_body.c_str(), 
-                            send_msg_body.size());
-                        mtx.unlock();
-                    }
-                    if(send_msg_req) 
+                    if (send_msg_req) {
+                        if (send_msg_body.size() > 0) {
+                            mtx.lock();
+                            simple_secure_send_stc(fd, 0x10, s, buff, 
+                                (const uint8_t *)send_msg_body.c_str(), 
+                                send_msg_body.size());
+                            mtx.unlock();
+                        }
                         send_msg_req.store(false);
-                    continue;
+                        continue;
+                    }
+                    else {
+                        if (heartbeat_req) {
+                            if (!pack_heartbeat(s.get_cinfo_hash_bytes(),
+                                client_k.get_sign_sk(), hb_pack)) {
+                                thread_err = T_HEARTBEAT_SENT_ERR;
+                                return;
+                            }
+                            if (simple_send_stc(fd, s, hb_pack.data(), 
+                                hb_pack.size()) < 0) {
+                                thread_err = T_HEARTBEAT_SENT_ERR;
+                                return;
+                            }
+                            last_heartbeat_sent.store(lc_utils::now_time());
+                            heartbeat_req.store(false);
+                        }
+                        continue;
+                    }
                 }
-                thread_err = 3;
+                thread_err = T_SOCKET_RECV_ERR;
                 return;
             }
             if (bytes < CLIENT_RECV_MIN_BYTES) 
                 continue;
             offset = 0;
             auto header = buff.recv_raw_buffer[0];
-            if (header != 0x11 && header != 0x10)
+            if (header != 0x11 && header != 0x10 && header != 0x1F)
                 continue;
             if (header == 0x11) {
                 ++ offset;
@@ -531,10 +620,23 @@ public:
                 msg_vec.push_back(msg_str);
                 is_msg_recved = true;
             }
+            else if (header == 0x1F) {
+                if (bytes != HEARTBEAT_BYTES)
+                    continue;
+                ++ offset;
+                if (crypto_sign_open(nullptr, &unsign_len, raw_beg + offset,
+                    bytes - offset, server_pk.get_server_spk().data()) != 0)
+                    continue;
+                if (std::memcmp(raw_beg + 1 + crypto_sign_BYTES, cif.data(), 
+                    cif.size()) != 0)
+                    continue;
+                mtx.lock();
+                s.update_src_addr(src_addr);
+                mtx.unlock();
+                last_heartbeat_recv.store(lc_utils::now_time());
+                continue;
+            }
             else {
-                std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
-                std::array<uint8_t, SID_BYTES> recved_sid;
-                std::array<uint8_t, CIF_BYTES> recved_cif;
                 ++ offset;
                 std::copy(raw_beg + offset, 
                     raw_beg + offset + crypto_aead_aes256gcm_NPUBBYTES, 
@@ -656,7 +758,7 @@ public:
         else {
             col_start = 0;
             col_end = (width * 3 / 4);
-            fmt_for_print(fmt_name, msg_uname, col_start, col_end, width, 
+            fmt_for_print(fmt_name, msg_uname + ":", col_start, col_end, width, 
                           left_align);
         }
         fmt_for_print(fmt_timestmp, timestmp, col_start, col_end, width, 
@@ -664,43 +766,54 @@ public:
         fmt_for_print(fmt_msg, bare_msg, col_start, col_end, width, left_align);
 
         std::string fmt_lines = fmt_name + fmt_timestmp + fmt_msg;
-        wprintw(win, "\n%s\n", fmt_lines.c_str());
+        wprintw(win, "\n%s", fmt_lines.c_str());
         wrefresh(win);
         return 0;
     }
 
-    // Refresh the input window
-    bool refresh_input_win (WINDOW *win, const char& ch) {
-        if (win == nullptr)
+    bool clear_input_win (WINDOW *win) {
+        int h, w;
+        getmaxyx(win, h, w);
+        if (win == nullptr || h < 0 || w < 0)
             return false;
-        wprintw(win, "%c", ch);
+        std::string padding(h * w, ' ');
+        wprintw(win, padding.c_str());
+        wmove(win, 0, 0);
         wrefresh(win);
         return true;
     }
 
-    bool reset_input_win (WINDOW *win, const char *prompt) {
-        if (win == nullptr)
-            return false;
-        wclear(win);
-        if (prompt)
-            wprintw(win, prompt);
-        wrefresh(win);
-        return true;
-    }
-
-    bool refresh_input_win (WINDOW *win, const char *prompt, 
+    bool refresh_input_win (WINDOW *win, const std::string& prompt, 
         const input_buffer& input) {
 
-        if(win == nullptr)
+        if (win == nullptr)
             return false;
         wclear(win);
-        if(prompt)
-            wprintw(win, prompt);
-        wprintw(win, input.ibuf.data());
+        if (input.bytes > 0) {
+            wprintw(win, "%s%s", prompt.c_str(), input.ibuf.data());
+            return true;
+        }
+        if (!clear_input_win(win))
+            return false;
+        wprintw(win, "%s", prompt.c_str());
         wrefresh(win);
         return true;
     }
 
+    void set_win_color (WINDOW *top_win, WINDOW *side_win, WINDOW *bottom_win) {
+        if (!has_colors())
+            return;
+        start_color();
+        init_pair(1, COLOR_CYAN, COLOR_BLACK);
+        init_pair(2, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(3, COLOR_WHITE, COLOR_BLACK);
+        wbkgdset(top_win, COLOR_PAIR(1));
+        wbkgdset(bottom_win, COLOR_PAIR(2));
+        wbkgdset(side_win, COLOR_PAIR(3));
+        wrefresh(top_win);
+        wrefresh(bottom_win);
+        wrefresh(side_win);
+    }
     // Close server and possible FD
     bool close_client (int err) {
         last_error = err;
@@ -723,7 +836,7 @@ public:
         client_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (client_fd < 0) 
             return close_client(SOCK_FD_INVALID);
-        std::cout << "lichat client started." << std::endl;
+        std::cout << "lichat client started. Handshaking now ..." << std::endl;
         return true;
     }
 
@@ -884,8 +997,17 @@ public:
         buffer.clear_buffer();
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
+        struct timeval tv;
+        tv.tv_sec = HANDSHAKE_TIMEOUT_SECS;
+        tv.tv_usec = 0;
+
+        if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, 
+            sizeof(tv)) < 0) {
+            return -127;
+        }
+
         auto ret = recvfrom(client_fd, buffer.recv_raw_buffer.data(), 
-                            buffer.recv_raw_buffer.size(), MSG_WAITALL, 
+                            buffer.recv_raw_buffer.size(), 0, 
                             (struct sockaddr *)(&src_addr), 
                             (socklen_t *)&addr_len);
         addr = src_addr;
@@ -985,11 +1107,24 @@ public:
                 buffer.send_bytes = offset + signed_cid_cpk.size();
                 simple_send(session, buffer.send_buffer.data(), 
                             buffer.send_bytes);
-                session.sent_cinfo((buffer.send_buffer[0] == 0x00)); // 0x00: requested server key, 0x01: not requested server key
+
+                // 0x00: requested server key, 0x01: not requested server key
+                session.sent_cinfo((buffer.send_buffer[0] == 0x00));
                 continue;
             }
             if (status == 1 || status == 2 || status == 4) {
-                buffer.recv_raw_bytes = wait_server_response(msg_addr);
+                // Here the socket is blocking mode for reliability.
+                auto wait_res = wait_server_response(msg_addr);
+                if (wait_res == -127) {
+                    std::cout << "Failed to set socket option." << std::endl;
+                    return close_client(SOCK_SETOPT_FAILED);
+                }
+                else if (wait_res < 0) {
+                    std::cout << "Handshaking timeout (" 
+                        << HANDSHAKE_TIMEOUT_SECS << " secs)." << std::endl;
+                    return close_client(HANDSHAKE_TIMEOUT);
+                }
+                buffer.recv_raw_bytes = wait_res;
                 if (buffer.recved_insuff_bytes(CLIENT_RECV_MIN_BYTES) || 
                     buffer.recved_overflow()) 
                     continue; // If size is invalid, ommit.
@@ -1264,6 +1399,11 @@ public:
                 user.set_suffix_flag(msg_body[0] == '!');
                 user.set_uemail(uinfo_res[0]);
                 user.set_uname(uinfo_res[1]);
+
+                // Save the current time.
+                auto now = lc_utils::now_time();
+                last_heartbeat_sent.store(now);
+                last_heartbeat_recv.store(now);
                 break; // Auth succeeded
             }
             if (status == 3) {
@@ -1338,7 +1478,6 @@ public:
         noecho();
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
-
         if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
             std::cout << "Window size too small (min: w x h " 
                       << (int)WIN_WIDTH_MIN << " x " << (int)WIN_HEIGHT_MIN
@@ -1347,19 +1486,19 @@ public:
             return close_client(WINDOW_SIZE_INVALID);
         }
 
-        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT, 
-                                width - SIDE_WIN_WIDTH, 0, 0);
-        WINDOW *bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH, 
-                                height - BOTTOM_HEIGHT, 0);
-        WINDOW *side_win = newwin(height, SIDE_WIN_WIDTH, 0, 
-                                width - SIDE_WIN_WIDTH);
+        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT - 2, 
+                                width - SIDE_WIN_WIDTH - 3, 1, 1);
+        WINDOW *bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
+                                height - BOTTOM_HEIGHT + 1, 1);
+        WINDOW *side_win = newwin(height - 2, SIDE_WIN_WIDTH, 1, 
+                                width - SIDE_WIN_WIDTH - 1);
 
         if (!top_win || !bottom_win || !side_win) {
-            std::cerr << "Failed to create windows." << std::endl;
             if (top_win) delwin(top_win);
             if (bottom_win) delwin(bottom_win);
             if (side_win) delwin(side_win);
             endwin();
+            std::cout << "Failed to create windows." << std::endl;
             return close_client(WINDOW_CREATION_FAILED);
         }
         // activate keypad for input
@@ -1369,21 +1508,30 @@ public:
         scrollok(bottom_win, TRUE);
         scrollok(side_win, TRUE);
 
+        set_win_color(top_win, side_win, bottom_win);
+        
+        const std::string prompt = "Enter your input: ";
         // Print welcome.
         wprintw(top_win, welcome);
         wrefresh(top_win);
-        wprintw(bottom_win, prompt);
+        wprintw(bottom_win, prompt.c_str());
         wrefresh(bottom_win);
         wprintw(side_win, "Users: \n");
         wrefresh(side_win);
 
         tui_running.store(true);
-        int thread_err = 0;
-        std::thread tui(std::bind(thread_run_tui, top_win, side_win, 
-            client_fd, buffer, session, server_pk_mgr, user, messages, 
-            thread_err));
+        heartbeating.store(true);
+        heartbeat_timeout.store(false);
 
-        while (true) {
+        int thread_err = 0;
+        std::thread tui(std::bind(thread_run_core, top_win, side_win, 
+            client_fd, buffer, session, server_pk_mgr, user, client_key,
+            messages, thread_err));
+        std::thread heartbeat(thread_heartbeat);
+
+        // heartbeat_timeout: timeout exit
+        // q!: normal exit
+        while (!heartbeat_timeout) {
             int ch = wgetch(bottom_win);
             if (ch == '\n' || input.bytes == input.ibuf.size() - 1) {
                 if (input.bytes == 0) 
@@ -1394,34 +1542,53 @@ public:
                     break;
                 }
                 mtx.lock();
-                send_msg_body = std::string(input.ibuf.data(), input.bytes);
+                send_msg_body = std::string(input.ibuf.data());
                 mtx.unlock();
                 send_msg_req.store(true);
-                input.clear();
+                std::memset(input.ibuf.data(), '\0', input.bytes + 1);
+                input.bytes = 0;
                 refresh_input_win(bottom_win, prompt, input);
                 continue;
             }
             if (ch != '\n' && (isprint(ch) || ch == '\t')) {
                 input.ibuf[input.bytes] = ch;
                 ++ input.bytes;
-                refresh_input_win(bottom_win, ch);
+                input.ibuf[input.bytes] = '\0';
+                refresh_input_win(bottom_win, prompt, input);
                 continue;
             }
             if (ch == KEY_BACKSPACE) {
-                if (input.bytes > 0) {
+                if (input.bytes > 0) 
                     -- input.bytes;
-                    input.ibuf[input.bytes] = '\0';
-                }
+                input.ibuf[input.bytes] = '\0';
                 refresh_input_win(bottom_win, prompt, input);
                 continue;
             }
         }
+        if (heartbeat_timeout) {
+            thread_err = T_HEARTBEAT_TIME_OUT;
+        }
+        // Stop the heartbeating thread
+        heartbeating.store(false);
+        // Stop the tui thread
+        tui_running.store(false);
+        // Heartbeat should be joinable.
+        heartbeat.join();
+        // TUI should be joinable.
         tui.join();
+
+        // Clear ncurses resources.
         delwin(top_win);
         delwin(bottom_win);
         delwin(side_win);
         endwin();
-        return (thread_err != 0) ? TEXT_UI_ERROR : NORMAL_RETURN;
+
+        // Print thread errors.
+        std::cout << parse_thread_err(thread_err) << std::endl;
+        if (thread_err == T_NORMAL_RETURN)
+            return true;
+        last_error = TUI_CORE_ERROR;
+        return false;
     }
 };
 
@@ -1456,5 +1623,9 @@ int main (int argc, char **argv) {
                   << new_client.get_last_error() << std::endl;
         return 3;
     }
-    return new_client.run_client();
+    if (!new_client.run_client()) {
+        std::cout << "Client running failure. Error Code: " 
+                  << new_client.get_last_error() << std::endl;
+    }
+    return new_client.get_last_error();
 }
