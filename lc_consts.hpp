@@ -37,7 +37,7 @@ constexpr uint8_t ok[] = {'O', 'K'};
 
 // Buffer size
 constexpr size_t BUFF_SIZE = 4096;
-constexpr size_t INPUT_BUFF_SIZE = BUFF_SIZE - 128;
+constexpr size_t INPUT_BUFF_SIZE = BUFF_SIZE - 256;
 
 // Err code has 1-byte header + 6-byte body
 constexpr size_t ERR_CODE_BYTES = 6;

@@ -30,8 +30,6 @@ constexpr char welcome[] = "\nWelcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
-constexpr char prompt[] = "Enter your input: ";
-
 std::atomic<bool> tui_running(false);
 std::atomic<bool> heartbeating(false);
 
@@ -75,10 +73,6 @@ struct input_buffer {
     size_t bytes;
     
     input_buffer () : bytes(0) {}
-    void clear () {
-        std::memset (ibuf.data(), 0, bytes);
-        bytes = 0;
-    }
 };
 
 class curr_user {
@@ -772,30 +766,21 @@ public:
         fmt_for_print(fmt_msg, bare_msg, col_start, col_end, width, left_align);
 
         std::string fmt_lines = fmt_name + fmt_timestmp + fmt_msg;
-        wprintw(win, "\n%s\n", fmt_lines.c_str());
+        wprintw(win, "\n%s", fmt_lines.c_str());
         wrefresh(win);
         return 0;
     }
 
-    // Refresh the input window
-    bool refresh_input_win (WINDOW *win, const char& ch) {
-        if (win == nullptr)
-            return false;
-        wprintw(win, "%c", ch);
-        wrefresh(win);
-        return true;
-    }
-
-    bool refresh_input_win (WINDOW *win, const char *prompt, 
+    bool refresh_input_win (WINDOW *win, const std::string& prompt, 
         const input_buffer& input) {
 
-        if(win == nullptr)
+        if (win == nullptr)
             return false;
         wclear(win);
-        wrefresh(win);
-        if(prompt)
-            wprintw(win, prompt);
-        wprintw(win, input.ibuf.data());
+        if (input.bytes > 0) 
+            wprintw(win, "%s%s", prompt.c_str(), input.ibuf.data());
+        else 
+            wprintw(win, "%s", prompt.c_str());
         wrefresh(win);
         return true;
     }
@@ -804,9 +789,9 @@ public:
         if (!has_colors())
             return;
         start_color();
-        init_pair(1, COLOR_WHITE, COLOR_BLACK);
+        init_pair(1, COLOR_CYAN, COLOR_BLACK);
         init_pair(2, COLOR_YELLOW, COLOR_BLACK);
-        init_pair(3, COLOR_CYAN, COLOR_BLACK);
+        init_pair(3, COLOR_WHITE, COLOR_BLACK);
         wbkgdset(top_win, COLOR_PAIR(1));
         wbkgdset(bottom_win, COLOR_PAIR(2));
         wbkgdset(side_win, COLOR_PAIR(3));
@@ -1509,11 +1494,12 @@ public:
         scrollok(side_win, TRUE);
 
         set_win_color(top_win, side_win, bottom_win);
-
+        
+        const std::string prompt = "Enter your input: ";
         // Print welcome.
         wprintw(top_win, welcome);
         wrefresh(top_win);
-        wprintw(bottom_win, prompt);
+        wprintw(bottom_win, prompt.c_str());
         wrefresh(bottom_win);
         wprintw(side_win, "Users: \n");
         wrefresh(side_win);
@@ -1535,7 +1521,6 @@ public:
             if (ch == '\n' || input.bytes == input.ibuf.size() - 1) {
                 if (input.bytes == 0) 
                     continue;
-                input.ibuf[input.bytes] = '\0';
                 if (input.bytes == 2 && 
                     std::strcmp(input.ibuf.data(), "q!") == 0) {
                     tui_running.store(false);
@@ -1545,7 +1530,8 @@ public:
                 send_msg_body = std::string(input.ibuf.data());
                 mtx.unlock();
                 send_msg_req.store(true);
-                input.clear();
+                std::memset(input.ibuf.data(), '\0', input.bytes + 1);
+                input.bytes = 0;
                 refresh_input_win(bottom_win, prompt, input);
                 continue;
             }
