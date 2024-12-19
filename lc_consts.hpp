@@ -69,7 +69,7 @@ constexpr char default_key_dir[] = "./";
 // Heartbeating related.
 constexpr size_t HEARTBEAT_INTERVAL_SECS = 120;
 constexpr size_t HEARTBEAT_TIMEOUT_SECS = 180;
-constexpr size_t HEARTBEAT_THREAD_SLEEP = 1;
+constexpr size_t HEARTBEAT_THREAD_SLEEP_MS = 500;
 constexpr size_t HEARTBEAT_BYTES = 1 + crypto_sign_BYTES + CIF_BYTES;
 
 // A goodbye packet is a special heartbeating packet with an extra byte '!'
