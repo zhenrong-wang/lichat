@@ -522,7 +522,7 @@ public:
             if ((now - last_heartbeat_sent) >= HEARTBEAT_INTERVAL_SECS) 
                 heartbeat_req.store(true);
             std::this_thread::sleep_for(
-                std::chrono::seconds(HEARTBEAT_THREAD_SLEEP));
+                std::chrono::milliseconds(HEARTBEAT_THREAD_SLEEP_MS));
         }
     }
 
