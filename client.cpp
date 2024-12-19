@@ -30,6 +30,10 @@ constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
+const std::string prompt = "Enter your input: ";
+const std::string top_bar_msg = 
+    "LiChat: Free Software (LIC: MIT) for Free Speech.";
+
 std::atomic<bool> tui_running(false);
 std::atomic<bool> heartbeating(false);
 std::atomic<bool> auto_signout(false);
@@ -53,12 +57,11 @@ enum client_errors {
     HANDSHAKE_TIMEOUT,
     MSG_SIGNING_FAILED,
     SERVER_PK_MGR_ERROR,
+    HASH_PASSWORD_FAILED,
     SESSION_PREP_FAILED,
     UNBLOCK_SOCK_FAILED,
-    WINDOW_SIZE_INVALID,
-    WINDOW_CREATION_FAILED,
+    WINDOW_MGR_ERROR,
     TUI_CORE_ERROR,
-    HASH_PASSWORD_FAILED,
 };
 
 enum thread_errors {
@@ -71,12 +74,195 @@ enum thread_errors {
     T_SOCKET_RECV_ERR,
 };
 
+enum winmgr_errors {
+    W_NORMAL_RETURN = 0,
+    W_ALREADY_INITED,
+    W_NOT_INITIALIZED,
+    W_COLOR_NOT_SUPPORTED,
+    W_WINDOW_SIZE_INVALID,
+    W_WINDOW_CREATION_FAILED,
+};
+
 struct input_buffer {
     std::array<char, INPUT_BUFF_SIZE> ibuf;
     size_t bytes;
     
     input_buffer () : bytes(0) {
         std::memset(ibuf.data(), '\0', ibuf.size());
+    }
+};
+
+class window_mgr {
+    WINDOW *top_bar;
+    WINDOW *top_win;
+    WINDOW *bottom_win;
+    WINDOW *side_win;
+    int status;     // 0 - not initialized
+                    // 1 - created
+                    // 2 - set, ready for use, active
+                    // 3 - closable/collectable
+
+public: 
+    window_mgr () : top_bar(nullptr), top_win(nullptr), bottom_win(nullptr),
+        side_win(nullptr), status(0) {};
+
+    int init () {
+        if (status != 0) 
+            return W_ALREADY_INITED;
+        // Now start initialization.
+        setlocale(LC_ALL, "");
+        initscr();
+        cbreak();
+        noecho();
+        int height = 0, width = 0;
+        getmaxyx(stdscr, height, width);
+        if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) 
+            return W_WINDOW_SIZE_INVALID;
+
+        top_bar = newwin(1, width - 2, 1, 1);
+        top_win = newwin(height - BOTTOM_HEIGHT - TOP_BAR_HEIGHT - 4, 
+                         width - SIDE_WIN_WIDTH - 3, TOP_BAR_HEIGHT + 2, 1);
+        bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
+                            height - BOTTOM_HEIGHT - 1, 1);
+        side_win = newwin(height - 2, SIDE_WIN_WIDTH, TOP_BAR_HEIGHT + 2, 
+                          width - SIDE_WIN_WIDTH - 1);
+        if (!top_bar || !top_win || !bottom_win || !side_win) {
+            if (top_bar) delwin(top_bar);
+            if (top_win) delwin(top_win);
+            if (bottom_win) delwin(bottom_win);
+            if (side_win) delwin(side_win);
+            endwin();
+            return W_WINDOW_CREATION_FAILED;
+        }
+        status = 1;
+        return W_NORMAL_RETURN;
+    }
+
+    int set_win_color () {
+        if (status != 1)
+            return W_NOT_INITIALIZED;
+        if (!has_colors())
+            return W_COLOR_NOT_SUPPORTED;
+        start_color();
+        init_pair(1, COLOR_GREEN, COLOR_BLACK);     // top_bar
+        init_pair(2, COLOR_CYAN, COLOR_BLACK);      // top_win
+        init_pair(3, COLOR_YELLOW, COLOR_BLACK);    // bottom_win
+        init_pair(4, COLOR_MAGENTA, COLOR_BLACK);   // side_win
+        
+        wbkgdset(top_bar, COLOR_PAIR(1));
+        wbkgdset(top_win, COLOR_PAIR(2));
+        wbkgdset(bottom_win, COLOR_PAIR(3));
+        wbkgdset(side_win, COLOR_PAIR(4));
+
+        wrefresh(top_bar);
+        wrefresh(top_win);
+        wrefresh(bottom_win);
+        wrefresh(side_win);
+        return W_NORMAL_RETURN;
+    }
+
+    int set () {
+        if (status != 1) 
+            return W_NOT_INITIALIZED;
+        // activate keypad for input
+        keypad(bottom_win, TRUE);
+        // Activate scroll
+        scrollok(top_bar, TRUE);
+        scrollok(top_win, TRUE);
+        scrollok(bottom_win, TRUE);
+        scrollok(side_win, TRUE);
+        auto set_color = set_win_color();
+        wprintw(top_bar, top_bar_msg.c_str());
+        wrefresh(top_bar);
+        if (set_color != W_NORMAL_RETURN)
+            wprintw(top_win, "%s\n[CLIENT]: Color not supported.\n", welcome);
+        else
+            wprintw(top_win, welcome);
+        wrefresh(top_win);
+        wprintw(bottom_win, prompt.c_str());
+        wrefresh(bottom_win);
+        wprintw(side_win, "Users: \n");
+        wrefresh(side_win);
+        return W_NORMAL_RETURN;
+        status = 2;
+    }
+    // Thread risk! Please make sure the windows are not in use.
+    bool close () {
+        if (status != 3) 
+            return false;
+        delwin(top_bar);
+        delwin(top_win);
+        delwin(bottom_win);
+        delwin(side_win);
+        endwin();
+        return true;
+    }
+    void make_closable () {
+        status = 3;
+    }
+    void force_close () {
+        make_closable();
+        close();
+    }
+    const auto get_status () {
+        return status;
+    }
+    auto get_top_bar () {
+        return top_bar;
+    }
+    auto get_top_win () {
+        return top_win;
+    }
+    auto get_bottom_win () {
+        return bottom_win;
+    }
+    auto get_side_win () {
+        return side_win;
+    }
+    std::string error_to_string (int ret) {
+        if (ret == W_NORMAL_RETURN)
+            return "";
+        if (ret == W_ALREADY_INITED)
+            return "ncurses windows already initialized.";
+        if (ret == W_COLOR_NOT_SUPPORTED)
+            return "The terminal doesn't support color";
+        if (ret == W_WINDOW_SIZE_INVALID) {
+            std::ostringstream oss;
+            oss << "Window size too small (min: w x h " 
+                << (int)WIN_WIDTH_MIN << " x " << (int)WIN_HEIGHT_MIN << " ).";
+            return oss.str();
+        }
+        if (ret == W_WINDOW_CREATION_FAILED) 
+            return "Failed to create windows.";
+        if (ret == W_NOT_INITIALIZED) 
+            return "ncurses windows not initialized.";
+        else 
+            return "Unknown error. Probably a bug triggered.";
+    }
+
+    void clear_input(const std::string& prompt) {
+        if (bottom_win == nullptr) 
+            return;
+        int w = getmaxx(bottom_win);
+        if (w <= 0) 
+            return;
+        int start_y = prompt.size() / w, start_x = prompt.size() % w;
+        wmove(bottom_win, start_y, start_x);
+        wclrtobot(bottom_win);
+        wrefresh(bottom_win);
+    }
+
+    bool refresh_input (const std::string& prompt, 
+        const input_buffer& input) {
+        if (bottom_win == nullptr) return false;
+        int w = getmaxx(bottom_win);
+        int start_y = prompt.size() / w, start_x = prompt.size() % w;
+        wmove(bottom_win, start_y, start_x);
+        wclrtobot(bottom_win);
+        mvwprintw(bottom_win, start_y, start_x, "%s [chars: %d]", 
+                  input.ibuf.data(), input.bytes);
+        wrefresh(bottom_win);
+        return true;
     }
 };
 
@@ -326,6 +512,7 @@ class lichat_client {
     input_buffer input;
     std::vector<std::string> messages;
     curr_user user;
+    window_mgr winmgr;
     int last_error;
 
 public:
@@ -334,7 +521,8 @@ public:
         client_fd(-1), server_pk_mgr(client_server_pk_mgr()), 
         key_dir(default_key_dir), session(client_session()), 
         client_key(key_mgr_25519(key_dir, "client_")), buffer(msg_buffer()), 
-        input(input_buffer()), user(curr_user()), last_error(0) {
+        input(input_buffer()), user(curr_user()), winmgr(window_mgr()),
+        last_error(0) {
 
         server_port = DEFAULT_SERVER_PORT;
         server_addr.sin_addr.s_addr = inet_addr(DEFAULT_SERVER_ADDR);
@@ -543,13 +731,15 @@ public:
         return true;
     }
 
-    static void thread_run_core (WINDOW *top_win, WINDOW *side_win, 
+    static void thread_run_core (window_mgr& wins, 
         const int fd, msg_buffer& buff, client_session& s, 
         const client_server_pk_mgr& server_pk, const curr_user& u,
         const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
         int& thread_err) {
         
         thread_err = T_NORMAL_RETURN;
+        auto top_win = wins.get_top_win();
+        auto side_win = wins.get_side_win();
         if (top_win == nullptr || side_win == nullptr) {
             thread_err = T_WINDOW_NULL;
             return;
@@ -824,46 +1014,6 @@ public:
         return 0;
     }
 
-    void clear_input(WINDOW *win, const std::string& prompt) {
-        if (win == nullptr) 
-            return;
-        int w = getmaxx(win);
-        if (w <= 0) 
-            return;
-        int start_y = prompt.size() / w, start_x = prompt.size() % w;
-        wmove(win, start_y, start_x);
-        wclrtobot(win);
-        wrefresh(win);
-    }
-
-    bool refresh_input (WINDOW *win, const std::string& prompt, 
-        const input_buffer& input) {
-        if (win == nullptr)
-            return false;
-        int w = getmaxx(win);
-        int start_y = prompt.size() / w, start_x = prompt.size() % w;
-        wmove(win, start_y, start_x);
-        wclrtobot(win);
-        mvwprintw(win, start_y, start_x, "%s [chars: %d]", input.ibuf.data(), 
-                input.bytes);
-        wrefresh(win);
-        return true;
-    }
-
-    void set_win_color (WINDOW *top_win, WINDOW *side_win, WINDOW *bottom_win) {
-        if (!has_colors())
-            return;
-        start_color();
-        init_pair(1, COLOR_CYAN, COLOR_BLACK);
-        init_pair(2, COLOR_YELLOW, COLOR_BLACK);
-        init_pair(3, COLOR_MAGENTA, COLOR_BLACK);
-        wbkgdset(top_win, COLOR_PAIR(1));
-        wbkgdset(bottom_win, COLOR_PAIR(2));
-        wbkgdset(side_win, COLOR_PAIR(3));
-        wrefresh(top_win);
-        wrefresh(bottom_win);
-        wrefresh(side_win);
-    }
     // Close server and possible FD
     bool close_client (int err) {
         last_error = err;
@@ -1521,53 +1671,12 @@ public:
         if (!nonblock_socket()) 
             return close_client(UNBLOCK_SOCK_FAILED);
 
-        // Now, the messaging interface started.
-        setlocale(LC_ALL, "");
-        initscr();
-        cbreak();
-        noecho();
-        int height = 0, width = 0;
-        getmaxyx(stdscr, height, width);
-        if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
-            std::cout << "Window size too small (min: w x h " 
-                      << (int)WIN_WIDTH_MIN << " x " << (int)WIN_HEIGHT_MIN
-                      << " )." << std::endl;
-            endwin();
-            return close_client(WINDOW_SIZE_INVALID);
+        auto ret = winmgr.init();
+        if (ret != W_NORMAL_RETURN) {
+            std::cout << winmgr.error_to_string(ret) << std::endl;
+            return close_client(WINDOW_MGR_ERROR);
         }
-
-        WINDOW *top_win = newwin(height - BOTTOM_HEIGHT - 3, 
-                                width - SIDE_WIN_WIDTH - 3, 1, 1);
-        WINDOW *bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
-                                height - BOTTOM_HEIGHT - 1, 1);
-        WINDOW *side_win = newwin(height - 2, SIDE_WIN_WIDTH, 1, 
-                                width - SIDE_WIN_WIDTH - 1);
-
-        if (!top_win || !bottom_win || !side_win) {
-            if (top_win) delwin(top_win);
-            if (bottom_win) delwin(bottom_win);
-            if (side_win) delwin(side_win);
-            endwin();
-            std::cout << "Failed to create windows." << std::endl;
-            return close_client(WINDOW_CREATION_FAILED);
-        }
-        // activate keypad for input
-        keypad(bottom_win, TRUE);
-        // Activate scroll
-        scrollok(top_win, TRUE);
-        scrollok(bottom_win, TRUE);
-        scrollok(side_win, TRUE);
-
-        set_win_color(top_win, side_win, bottom_win);
-        
-        const std::string prompt = "Enter your input: ";
-        // Print welcome.
-        wprintw(top_win, welcome);
-        wrefresh(top_win);
-        wprintw(bottom_win, prompt.c_str());
-        wrefresh(bottom_win);
-        wprintw(side_win, "Users: \n");
-        wrefresh(side_win);
+        winmgr.set();
 
         send_msg_req.store(false);
         send_gby_req.store(false);
@@ -1577,16 +1686,15 @@ public:
         heartbeat_timeout.store(false);
 
         int thread_err = 0;
-        std::thread tui(std::bind(thread_run_core, top_win, side_win, 
-            client_fd, buffer, session, server_pk_mgr, user, client_key,
-            messages, thread_err));
+        std::thread tui(std::bind(thread_run_core, winmgr, client_fd, buffer, 
+            session, server_pk_mgr, user, client_key, messages, thread_err));
         std::thread heartbeat(thread_heartbeat);
 
         // heartbeat_timeout: timeout exit
         // auto_signout: signed in on another client.
         // q!: normal exit
         while (!heartbeat_timeout && !auto_signout) {
-            int ch = wgetch(bottom_win);
+            int ch = wgetch(winmgr.get_bottom_win());
             if (ch == '\n' || ch == '\r' || 
                 input.bytes == input.ibuf.size() - 5) {
                 if (input.bytes == 0) 
@@ -1594,7 +1702,7 @@ public:
                 if (input.bytes == 3 && 
                     std::strcmp(input.ibuf.data(), ":q!") == 0) {
                     send_gby_req.store(true);
-                    wgetch(bottom_win);
+                    wgetch(winmgr.get_bottom_win());
                     break;
                 }
                 mtx.lock();
@@ -1603,7 +1711,7 @@ public:
                 send_msg_req.store(true);
                 std::memset(input.ibuf.data(), '\0', input.bytes);
                 input.bytes = 0;
-                clear_input(bottom_win, prompt);
+                winmgr.clear_input(prompt);
                 continue;
             }
             if (ch != '\n' && (isprint(ch) || ch == '\t')) {
@@ -1617,14 +1725,14 @@ public:
                     input.ibuf[input.bytes] = ch;
                     ++ input.bytes;
                 }
-                refresh_input(bottom_win, prompt, input);
+                winmgr.refresh_input(prompt, input);
                 continue;
             }
             if (ch == KEY_BACKSPACE) {
                 if (input.bytes > 0) 
                     -- input.bytes;
                 input.ibuf[input.bytes] = '\0';
-                refresh_input(bottom_win, prompt, input);
+                winmgr.refresh_input(prompt, input);
             }
         }
         if (heartbeat_timeout) 
@@ -1638,10 +1746,7 @@ public:
         // TUI should be joinable.
         tui.join();
         // Clear ncurses resources.
-        delwin(top_win);
-        delwin(bottom_win);
-        delwin(side_win);
-        endwin();
+        winmgr.force_close();
         // Print thread errors.
         if (auto_signout)
             std::cout << signout_close << std::endl;
