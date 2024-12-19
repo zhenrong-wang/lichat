@@ -6,27 +6,27 @@ This is a design to make UDP communication between a communication pair (we can 
 
 There are 2 key pairs at client side and server side: `curve25519` for key exchange and `ed25519` for signature.
 
-At Client Side: `client_crypto.pub, client_crypto.sec` (**c_crypto_pk**, **c_crypto_sk**) and `client_sign.pub, client_sign.sec` (**c_sign_pk**, **c_sign_sk**).
+At Client Side: `client_crypto.pub, client_crypto.sec` and `client_sign.pub, client_sign.sec` .
 
-At Server Side: `server_crypto.pub, server_crypto.sec` (**s_crypto_pk**, **s_crypto_sk**) and `server_sign.pub, server_sign.sec` (**s_sign_pk**, **s_sign_sk**).
+At Server Side: `server_crypto.pub, server_crypto.sec` and `server_sign.pub, server_sign.sec`.
 
-The `*_crypto.pub` (**\*_crypto_pk**) and `*_crypto.sec` (**\*_crypto_sk**) are public key and secret key of a curve25519 key pair.
+The `*_crypto.pub` and `*_crypto.sec` are public key and secret key of a curve25519 key pair.
 
-The `*_sign.pub` (**\*_sign_pk**) and `*_sign.sec` (**\*_sign_sk**) are public and secret key of a ed25519 key pair.
+The `*_sign.pub` and `*_sign.sec` are public and secret key of a ed25519 key pair.
 
-Please keep in mind that the `*.sec` (**\*_sk**) files are **secret keys** and would not be exposed to anyone or anywhere else.
+Please keep in mind that the `*.sec` files are **secret keys** and would **NOT BE EXPOSED OR TRANSFERRED TO ANYONE ELSE**.
 
 To make the name short, we define the abbreviations:
 
 - `c_spk`: Client Sign Public Key
-- `c_ssk`: Client Sign Secret Key
+- `c_ssk`: Client Sign **Secret Key**
 - `c_cpk`: Client Crypto Public Key
-- `c_csk`: Client Crypto Secret Key
+- `c_csk`: Client Crypto **Secret Key**
 
 - `s_spk`: Server Sign Public Key
-- `s_ssk`: Server Sign Secret Key
+- `s_ssk`: Server Sign **Secret Key**
 - `s_cpk`: Server Crypto Public Key
-- `s_csk`: Server Crypto Secret Key
+- `s_csk`: Server Crypto **Secret Key**
 
 - `aes_key`: AES256-GCM key
 - `aes_nonce`: AES256-GCM Nonce bytes
@@ -108,7 +108,7 @@ Now, with the validated handshake, server and client can send/recv messages secu
   - Gets the fixed-length `cinfo_hash` and `AES_nonce`, retrieve the `AES_key` and `server_sid`.
   - Try to decrypt the message body, aka the (**AES encrypted**)`server_sid` (**AES encrypted**)`hello!`
   - Get the `server_sid` first, and compare whether received `server_sid` == stored `server_sid`.
-    - If `server_sid`s matche, the message is good to process. Server will assemble a message `server_sid` `cinfo_hash` `yes!`, encrypt it with `AES_key`, and add a header `0x10` `AES_nonce`, send back to the client address.
+    - If `server_sid`s match, the message is good to process. Server will assemble a message `server_sid` `cinfo_hash` `yes!`, encrypt it with `AES_key`, and add a header `0x10` `AES_nonce`, send back to the client address.
     - If `server_sid`s don't match, send `0xCF` `SIDERR` to client, and the client will restart the handshake. 
 - Client receives the message `0x10 AES_nonce`, tries to decrypt the message with the local stored `AES_key` `AES_attr`, and gets the `yes!` message body.
 
@@ -119,7 +119,7 @@ Although the secure communication channel has been established, clients and serv
 Signed public message format is simple:
 
 - The header is `0x11`, it is 1 byte.
-- Following the header flag is the message body.
+- Following the header flag is the **SELF_SIGNED** message body.
 
 None of the information above is encrypted, but they **MUST** be signed for verification. 
 
