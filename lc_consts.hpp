@@ -96,6 +96,6 @@ constexpr char connection_reset[] = "This connection has been reset.\n\n";
 constexpr char s_signout[5] = {'[', '(', '!', ')', ']'};
 constexpr char s_signout_msg[] = "You've signed in on another client. \
 Signed out here.\nPress any key to exit.";
-constexpr char s_signout_msg[] = "[(!)] You've signed in on another client.";
+constexpr char auto_signout[] = "[(!)] You've signed in on another client.";
 
 #endif
