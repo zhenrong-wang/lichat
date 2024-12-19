@@ -847,7 +847,7 @@ public:
         start_color();
         init_pair(1, COLOR_CYAN, COLOR_BLACK);
         init_pair(2, COLOR_YELLOW, COLOR_BLACK);
-        init_pair(3, COLOR_WHITE, COLOR_BLACK);
+        init_pair(3, COLOR_MAGENTA, COLOR_BLACK);
         wbkgdset(top_win, COLOR_PAIR(1));
         wbkgdset(bottom_win, COLOR_PAIR(2));
         wbkgdset(side_win, COLOR_PAIR(3));
