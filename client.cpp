@@ -26,7 +26,7 @@
 #include <errno.h>
 #include <mutex>
 
-constexpr char welcome[] = "\nWelcome to LightChat Service (aka LiChat)!\n\
+constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
