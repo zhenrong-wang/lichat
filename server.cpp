@@ -1398,6 +1398,8 @@ public:
                         simple_secure_send(0x10, prev_cif, 
                             (const uint8_t *)(system_msg.c_str()), 
                             system_msg.size());
+                        clients.delete_ctx(prev_cif);
+                        conns.delete_session(prev_cif);
                     }
                     timestamp = lc_utils::now_time_to_str();
                     std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
