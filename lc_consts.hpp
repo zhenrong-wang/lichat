@@ -7,9 +7,10 @@
 
 // Client Window related
 constexpr size_t WIN_HEIGHT_MIN = 16;
-constexpr size_t WIN_WIDTH_MIN = 48;
+constexpr size_t WIN_WIDTH_MIN = 52;
 constexpr size_t SIDE_WIN_WIDTH = 16;
 constexpr size_t BOTTOM_HEIGHT = 6;
+constexpr size_t TOP_BAR_HEIGHT = 1;
 
 // Critical bytes
 constexpr uint8_t CID_BYTES = 8;
@@ -93,7 +94,9 @@ constexpr char input_password[] = "\nPassword format:\n1) 4-32 ascii chars.\n\
    [lowercase]: a-z\n   [UPPERCASE]: A-Z\n   [#numbers#]: 0-9\n\
    [special_c]: ~!@#$%^&(){}[]-_=+;:,.<>/|\n\nPassword: ";
 constexpr char connection_reset[] = "This connection has been reset.\n\n";
-constexpr char auto_signout[] = "You've been signed in on another session. \
-Signed out here.";
+constexpr char s_signout[5] = {'[', '(', '!', ')', ']'};
+constexpr char s_signout_msg[] = "You've signed in on another client. \
+Signed out here.\nPress any key to exit.";
+constexpr char signout_close[] = "[(!)] You've signed in on another client.";
 
 #endif
