@@ -3,8 +3,8 @@
 - [2. Communication Process](#2-communication-process)
   - [2.1 Exchange Public Keys](#21-exchange-public-keys)
   - [2.2 Validate the AES Encryption](#22-validate-the-aes-encryption)
-  - [2.4 Communication / Messaging](#24-communication--messaging)
-  - [2.5 Public Messaging With Signatures](#25-public-messaging-with-signatures)
+  - [2.4 Secure Messaging with End-To-End Encryption](#24-secure-messaging-with-end-to-end-encryption)
+  - [2.5 Public Messaging With Signature](#25-public-messaging-with-signature)
   - [2.5 Heartbeating and Goodbye](#25-heartbeating-and-goodbye)
 - [3. Session Management](#3-session-management)
   - [3.1 Activate a Session](#31-activate-a-session)
@@ -109,7 +109,7 @@ There are 2 public keys to exchange at the very beginning: `s_spk` `c_spk` for s
 - If everything good, handshake done, server activates the session, and sends `0x02` **AES_ENCRYPTED**[`server_sid` `cinfo_hash` `OK`] packet.
 - Server compares the received `server_sid` and stored `server_sid`.
 
-## 2.4 Communication / Messaging
+## 2.4 Secure Messaging with End-To-End Encryption
 
 Now, with the validated handshake, server and client can send/recv messages securely. Suppose the client send the message `hello!`, and the server feedback with `yes!`. Here is the process:
 
@@ -125,7 +125,7 @@ Now, with the validated handshake, server and client can send/recv messages secu
     - If `server_sid`s don't match, send `0xCF` `SIDERR` to client, and the client will restart the handshake. 
 - Client receives the message `0x10 AES_nonce`, tries to decrypt the message with the local stored `AES_key` `AES_attr`, and gets the `yes!` message body.
 
-## 2.5 Public Messaging With Signatures
+## 2.5 Public Messaging With Signature
 
 Although the secure communication channel has been established, clients and servers still can do public/insecure messaging. However, all messages **MUST** be signed with the exchanged signature keys. 
 
