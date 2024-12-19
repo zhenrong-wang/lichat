@@ -116,9 +116,10 @@ public:
         noecho();
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
-        if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) 
+        if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
+            endwin();
             return W_WINDOW_SIZE_INVALID;
-
+        }
         top_bar = newwin(1, width - 2, 1, 1);
         top_win = newwin(height - BOTTOM_HEIGHT - TOP_BAR_HEIGHT - 4, 
                          width - SIDE_WIN_WIDTH - 3, TOP_BAR_HEIGHT + 2, 1);
