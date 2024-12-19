@@ -7,9 +7,10 @@
 
 // Client Window related
 constexpr size_t WIN_HEIGHT_MIN = 16;
-constexpr size_t WIN_WIDTH_MIN = 48;
+constexpr size_t WIN_WIDTH_MIN = 52;
 constexpr size_t SIDE_WIN_WIDTH = 16;
 constexpr size_t BOTTOM_HEIGHT = 6;
+constexpr size_t TOP_BAR_HEIGHT = 1;
 
 // Critical bytes
 constexpr uint8_t CID_BYTES = 8;
