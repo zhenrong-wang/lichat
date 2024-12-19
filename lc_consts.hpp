@@ -9,7 +9,7 @@
 constexpr size_t WIN_HEIGHT_MIN = 16;
 constexpr size_t WIN_WIDTH_MIN = 48;
 constexpr size_t SIDE_WIN_WIDTH = 16;
-constexpr size_t BOTTOM_HEIGHT = 8;
+constexpr size_t BOTTOM_HEIGHT = 6;
 
 // Critical bytes
 constexpr uint8_t CID_BYTES = 8;
@@ -69,8 +69,11 @@ constexpr char default_key_dir[] = "./";
 // Heartbeating related.
 constexpr size_t HEARTBEAT_INTERVAL_SECS = 120;
 constexpr size_t HEARTBEAT_TIMEOUT_SECS = 180;
-constexpr size_t HEARTBEAT_THREAD_SLEEP = 1;
+constexpr size_t HEARTBEAT_THREAD_SLEEP_MS = 500;
 constexpr size_t HEARTBEAT_BYTES = 1 + crypto_sign_BYTES + CIF_BYTES;
+
+// A goodbye packet is a special heartbeating packet with an extra byte '!'
+constexpr size_t GOODBYE_BYTES = HEARTBEAT_BYTES + 1;
 
 // Handshake related
 constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
