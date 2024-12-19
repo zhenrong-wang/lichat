@@ -72,6 +72,9 @@ constexpr size_t HEARTBEAT_TIMEOUT_SECS = 180;
 constexpr size_t HEARTBEAT_THREAD_SLEEP = 1;
 constexpr size_t HEARTBEAT_BYTES = 1 + crypto_sign_BYTES + CIF_BYTES;
 
+// A goodbye packet is a special heartbeating packet with an extra byte '!'
+constexpr size_t GOODBYE_BYTES = HEARTBEAT_BYTES + 1;
+
 // Handshake related
 constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
 
