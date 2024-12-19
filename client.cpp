@@ -34,6 +34,7 @@ std::atomic<bool> tui_running(false);
 std::atomic<bool> heartbeating(false);
 
 std::atomic<bool> send_msg_req(false);
+std::atomic<bool> send_gby_req(false);
 std::atomic<bool> heartbeat_req(false);
 std::atomic<bool> heartbeat_timeout(false);
 
@@ -64,6 +65,7 @@ enum thread_errors {
     T_WINDOW_NULL,
     T_SOCK_FD_INVALID,
     T_HEARTBEAT_TIME_OUT,
+    T_GOODBYE_SENT_ERR,
     T_HEARTBEAT_SENT_ERR,
     T_SOCKET_RECV_ERR,
 };
@@ -392,6 +394,8 @@ public:
             return "Socket communication error.";
         else if (thread_err == T_HEARTBEAT_SENT_ERR) 
             return "Failed to send heartbeat packets.";
+        else if (thread_err == T_GOODBYE_SENT_ERR) 
+            return "Failed to send goodbye packet.";
         else if (thread_err == T_HEARTBEAT_TIME_OUT)
             return "Heartbeat timeout.";
         else
@@ -522,6 +526,22 @@ public:
         }
     }
 
+    static bool pack_goodbye (
+        const std::array<uint8_t, CIF_BYTES>& cif_bytes,
+        const std::array<uint8_t, crypto_sign_SECRETKEYBYTES>& client_sign_sk,
+        std::array<uint8_t, GOODBYE_BYTES>& packet) {
+        
+        packet[0] = 0x1F;
+        unsigned long long sign_len = 0;
+        std::array<uint8_t, CIF_BYTES + 1>raw_pack;
+        std::copy(cif_bytes.begin(), cif_bytes.end(), raw_pack.begin());
+        raw_pack[CIF_BYTES] = '!';
+        if (crypto_sign(packet.data() + 1, &sign_len, raw_pack.data(), 
+            raw_pack.size(), client_sign_sk.data()) != 0) 
+            return false;
+        return true;
+    }
+
     static void thread_run_core (WINDOW *top_win, WINDOW *side_win, 
         const int fd, msg_buffer& buff, client_session& s, 
         const client_server_pk_mgr& server_pk, const curr_user& u,
@@ -550,6 +570,7 @@ public:
         std::array<uint8_t, SID_BYTES> recved_sid;
         std::array<uint8_t, CIF_BYTES> recved_cif;
         std::array<uint8_t, HEARTBEAT_BYTES> hb_pack;
+        std::array<uint8_t, GOODBYE_BYTES> gby_pack;
 
         wprintw(top_win, "\n[SYSTEM] Your unique email: %s\n", 
                 u.get_uemail().c_str());     
@@ -562,6 +583,24 @@ public:
                 wprintw(top_win, "\nHeartbeat failed. Press any key to exit.\n");     
                 wrefresh(top_win);
                 thread_err = T_HEARTBEAT_TIME_OUT;
+                return;
+            }
+            if (send_gby_req) {
+                wprintw(top_win, "[CLIENT] Will notify the server and exit.\n");     
+                wrefresh(top_win);
+                if (!pack_goodbye(s.get_cinfo_hash_bytes(), 
+                    client_k.get_sign_sk(), gby_pack)) {
+                    thread_err = T_GOODBYE_SENT_ERR;
+                    return;
+                }
+                if (simple_send_stc(fd, s, gby_pack.data(), 
+                    gby_pack.size()) < 0) {
+                    thread_err = T_HEARTBEAT_SENT_ERR;
+                    return;
+                }
+                send_gby_req.store(false);
+                wprintw(top_win, "[CLIENT] Signed out. Press any key to exit.\n");     
+                wrefresh(top_win);
                 return;
             }
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
@@ -1455,7 +1494,7 @@ public:
                 if (!lc_utils::pass_hash_dryrun(password, hashed_pwd)) {
                     last_error = HASH_PASSWORD_FAILED;
                     password.clear(); // For security concern.
-                    return false;
+                    return close_client(HASH_PASSWORD_FAILED);
                 }
                 auto user_info = assemble_user_info(
                     (option == "1" || option == "signup"), 
@@ -1521,6 +1560,8 @@ public:
         wprintw(side_win, "Users: \n");
         wrefresh(side_win);
 
+        send_msg_req.store(false);
+        send_gby_req.store(false);
         tui_running.store(true);
         heartbeating.store(true);
         heartbeat_timeout.store(false);
@@ -1536,12 +1577,13 @@ public:
         while (!heartbeat_timeout) {
             int ch = wgetch(bottom_win);
             if (ch == '\n' || ch == '\r' || 
-                input.bytes == input.ibuf.size() - 1) {
+                input.bytes == input.ibuf.size() - 5) {
                 if (input.bytes == 0) 
                     continue;
                 if (input.bytes == 3 && 
                     std::strcmp(input.ibuf.data(), ":q!") == 0) {
-                    tui_running.store(false);
+                    send_gby_req.store(true);
+                    wgetch(bottom_win);
                     break;
                 }
                 mtx.lock();
@@ -1574,9 +1616,9 @@ public:
                 refresh_input(bottom_win, prompt, input);
             }
         }
-        if (heartbeat_timeout) {
+        if (heartbeat_timeout) 
             thread_err = T_HEARTBEAT_TIME_OUT;
-        }
+
         // Stop the heartbeating thread
         heartbeating.store(false);
         // Stop the tui thread
@@ -1591,13 +1633,11 @@ public:
         delwin(bottom_win);
         delwin(side_win);
         endwin();
-
         // Print thread errors.
         std::cout << parse_thread_err(thread_err) << std::endl;
         if (thread_err == T_NORMAL_RETURN)
             return true;
-        last_error = TUI_CORE_ERROR;
-        return false;
+        return close_client(TUI_CORE_ERROR);
     }
 };
 
