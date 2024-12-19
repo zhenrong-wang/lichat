@@ -512,7 +512,7 @@ public:
 
     static void thread_heartbeat () {
         // heartbeating was set to false, passive stop
-        // heartbeat timeout, aggressive stop
+        // heartbeat timeout, active stop
         while (heartbeating) {
             auto now = lc_utils::now_time();
             if (now - last_heartbeat_recv >= HEARTBEAT_TIMEOUT_SECS) {
