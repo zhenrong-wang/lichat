@@ -1644,7 +1644,7 @@ public:
         endwin();
         // Print thread errors.
         if (auto_signout)
-            std::cout << s_signout_msg << std::endl;
+            std::cout << signout_close << std::endl;
         std::cout << parse_thread_err(thread_err) << std::endl;
         if (thread_err == T_NORMAL_RETURN)
             return true;
