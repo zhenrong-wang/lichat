@@ -1,4 +1,17 @@
-# How To Make UDP Communications Secure?
+[How To Make UDP Communications Secure?](#how-to-make-udp-communications-secure)
+- [1. Prerequisites](#1-prerequisites)
+- [2. Communication Process](#2-communication-process)
+  - [2.1 Exchange Public Keys](#21-exchange-public-keys)
+  - [2.2 Validate the AES Encryption](#22-validate-the-aes-encryption)
+  - [2.4 Communication / Messaging](#24-communication--messaging)
+  - [2.5 Public Messaging With Signatures](#25-public-messaging-with-signatures)
+  - [2.5 Heartbeating and Goodbye](#25-heartbeating-and-goodbye)
+- [3. Session Management](#3-session-management)
+  - [3.1 Activate a Session](#31-activate-a-session)
+  - [3.2 Securing a Session](#32-securing-a-session)
+  - [3.3 Disable a Session](#33-disable-a-session)
+  - [3.4 On an Activated Session](#34-on-an-activated-session)
+- [4. Future Works](#4-future-works)
 
 This is a design to make UDP communication between a communication pair (we can call it `client` and `server`) secure.
 
