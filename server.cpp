@@ -1393,11 +1393,10 @@ public:
                     if (clients.clear_ctx_by_uid(cinfo_hash, uemail, prev_cif))
                     {
                         timestamp = lc_utils::now_time_to_str();
-                        std::string system_msg = 
-                            ",[SYSTEM]," + std::string(auto_signout);
                         simple_secure_send(0x10, prev_cif, 
-                            (const uint8_t *)(system_msg.c_str()), 
-                            system_msg.size());
+                            (const uint8_t *)s_signout, sizeof(s_signout));
+                        clients.delete_ctx(prev_cif);
+                        conns.delete_session(prev_cif);
                     }
                     timestamp = lc_utils::now_time_to_str();
                     std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
