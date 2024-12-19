@@ -1223,9 +1223,13 @@ public:
                 conns.delete_session(cinfo_hash); 
                 continue;
             }
-            // Heartbeat message, must be signed with the client_sign_secret_key
+            // 1. Heartbeat message, needs to beat back.
+            //    0x1F + signed(CIF)
+            // 2. Goodbye message, delete the connection and context.
+            //    0x1F + signed(CIF + '!')
             if (header == 0x1F) {
-                if (buffer.recv_raw_bytes != HEARTBEAT_BYTES)
+                if (buffer.recv_raw_bytes != HEARTBEAT_BYTES &&
+                    buffer.recv_raw_bytes != GOODBYE_BYTES)
                     continue;
                 std::array<uint8_t, CIF_BYTES> recved_cif_bytes;
                 auto beg = buffer.recv_raw_buffer.begin();
@@ -1238,17 +1242,40 @@ public:
                     continue; // Not a valid cif.
                 auto client_spk = ptr_session->get_client_sign_key();
                 if (crypto_sign_open(nullptr, &unsign_len, beg + 1,
-                    HEARTBEAT_BYTES - 1, client_spk.data()))
+                    buffer.recv_raw_bytes - 1, client_spk.data()))
                     continue;  // Not a valid signature.
-                // All the checks done, update the addr.
-                ptr_session->set_src_addr(client_addr);
-                std::array<uint8_t, HEARTBEAT_BYTES> packet;
-                packet[0] = 0x1F;
-                if (crypto_sign(packet.data() + 1, &sign_len, 
-                    recved_cif_bytes.data(), recved_cif_bytes.size(), 
-                    key_mgr.get_sign_sk().data()) != 0) 
-                    return close_server(7);
-                simple_send(client_addr, packet.data(), packet.size());
+
+                if (buffer.recv_raw_bytes == HEARTBEAT_BYTES) {
+                    // All the checks done, update the addr.
+                    ptr_session->set_src_addr(client_addr);
+                    std::array<uint8_t, HEARTBEAT_BYTES> packet;
+                    packet[0] = 0x1F;
+                    if (crypto_sign(packet.data() + 1, &sign_len, 
+                        recved_cif_bytes.data(), recved_cif_bytes.size(), 
+                        key_mgr.get_sign_sk().data()) != 0) 
+                        return close_server(7);
+                    simple_send(client_addr, packet.data(), packet.size());
+                    continue;
+                }
+                auto last_byte = buffer.recv_raw_buffer[buffer.recv_raw_bytes - 1];
+                // Now if the last byte is '!', it is a goodbye packet.
+                if (last_byte != '!')
+                    continue; // Not a valid packet.
+
+                auto uemail = clients.get_ctx(recved_cif)->get_bind_uid();
+                auto uname = users.get_uname_by_uemail(uemail);
+                // Delete all the context info.
+                clients.delete_ctx(recved_cif);
+                // Delete all the session data.
+                conns.delete_session(recved_cif);
+                
+                timestamp = lc_utils::now_time_to_str();
+                std::string bcast_msg = 
+                    timestamp + ",[SYSTEM_BCAST]," + (*uname) + " signed out!";
+                //std::cout << bcast_msg << std::endl;
+                // Broadcasting to all active users.      
+                broadcasting((const uint8_t *)(bcast_msg.c_str()), 
+                    bcast_msg.size());
                 continue;
             }
             if (header == 0x10) {
