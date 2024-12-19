@@ -32,6 +32,7 @@ Code: https://github.com/zhenrong-wang/lichat\n";
 
 std::atomic<bool> tui_running(false);
 std::atomic<bool> heartbeating(false);
+std::atomic<bool> auto_signout(false);
 
 std::atomic<bool> send_msg_req(false);
 std::atomic<bool> send_gby_req(false);
@@ -695,19 +696,27 @@ public:
                 // Reading aes buffer.
                 offset = 0;
                 std::copy(aes_beg + offset, aes_beg + offset + SID_BYTES, 
-                            recved_sid.begin());
+                          recved_sid.begin());
                 offset += SID_BYTES;
                 std::copy(aes_beg + offset, aes_beg + offset + CIF_BYTES,
-                            recved_cif.begin());
+                          recved_cif.begin());
                 offset += CIF_BYTES;
                 if (sid != recved_sid || cif != recved_cif)
                     continue;
-                std::string msg_body((char *)(aes_beg + offset), 
-                    aes_decrypted_len - offset);
+                auto msg_beg = aes_beg + offset;
+                auto msg_len = aes_decrypted_len - offset;
+                std::string msg_body((char *)msg_beg, msg_len);
                 msg_vec.push_back(msg_body);
                 is_msg_recved = true;
-                //wprintw(top_win, "%s~~~~~~~~~~~~~~~~~\n", msg_body.c_str());
-                //wrefresh(top_win);
+                if (msg_len == sizeof(s_signout) && 
+                    std::memcmp(s_signout, msg_beg, sizeof(s_signout)) == 0) {
+                    // A special encrypted message [!!!] received.
+                    // Auto signed out on another client.
+                    wprintw(top_win, s_signout_msg);
+                    wrefresh(top_win);
+                    auto_signout.store(true);
+                    return;
+                }
             }
             if (is_msg_recved) 
                 fmt_prnt_msg(top_win, msg_vec.back(), u.get_uname());
@@ -1564,6 +1573,7 @@ public:
         send_gby_req.store(false);
         tui_running.store(true);
         heartbeating.store(true);
+        auto_signout.store(false);
         heartbeat_timeout.store(false);
 
         int thread_err = 0;
@@ -1573,8 +1583,9 @@ public:
         std::thread heartbeat(thread_heartbeat);
 
         // heartbeat_timeout: timeout exit
+        // auto_signout: signed in on another client.
         // q!: normal exit
-        while (!heartbeat_timeout) {
+        while (!heartbeat_timeout && !auto_signout) {
             int ch = wgetch(bottom_win);
             if (ch == '\n' || ch == '\r' || 
                 input.bytes == input.ibuf.size() - 5) {
@@ -1618,7 +1629,6 @@ public:
         }
         if (heartbeat_timeout) 
             thread_err = T_HEARTBEAT_TIME_OUT;
-
         // Stop the heartbeating thread
         heartbeating.store(false);
         // Stop the tui thread
@@ -1627,13 +1637,14 @@ public:
         heartbeat.join();
         // TUI should be joinable.
         tui.join();
-
         // Clear ncurses resources.
         delwin(top_win);
         delwin(bottom_win);
         delwin(side_win);
         endwin();
         // Print thread errors.
+        if (auto_signout)
+            std::cout << s_signout_msg << std::endl;
         std::cout << parse_thread_err(thread_err) << std::endl;
         if (thread_err == T_NORMAL_RETURN)
             return true;

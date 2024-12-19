@@ -93,7 +93,9 @@ constexpr char input_password[] = "\nPassword format:\n1) 4-32 ascii chars.\n\
    [lowercase]: a-z\n   [UPPERCASE]: A-Z\n   [#numbers#]: 0-9\n\
    [special_c]: ~!@#$%^&(){}[]-_=+;:,.<>/|\n\nPassword: ";
 constexpr char connection_reset[] = "This connection has been reset.\n\n";
-constexpr char auto_signout[] = "You've been signed in on another session. \
-Signed out here.";
+constexpr char s_signout[5] = {'[', '(', '!', ')', ']'};
+constexpr char s_signout_msg[] = "You've signed in on another client. \
+Signed out here.\nPress any key to exit.";
+constexpr char s_signout_msg[] = "[(!)] You've signed in on another client.";
 
 #endif
