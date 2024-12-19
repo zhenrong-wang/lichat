@@ -796,8 +796,8 @@ public:
             col_start = (width < 2) ? 0 : (width / 2); // value >= 0
             col_end = width;
             left_align = false;
-            fmt_for_print(fmt_name, std::string("You:"), col_start, col_end, 
-                          width, left_align);
+            fmt_for_print(fmt_name, std::string("[YOU] ") + uname + ":", 
+                          col_start, col_end, width, left_align);
         }
         else {
             col_start = 0;
