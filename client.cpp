@@ -1744,7 +1744,10 @@ public:
 
             if (res != OK) {
                 if (wch == KEY_BACKSPACE) {
-                    input.wstr.pop_back();
+                    if (input.bytes > 0) {
+                        input.wstr.pop_back();
+                        -- input.bytes;
+                    }
                     winmgr.refresh_input(prompt, input);
                 }
                 continue;
