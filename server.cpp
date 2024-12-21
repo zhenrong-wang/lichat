@@ -892,75 +892,6 @@ public:
         return false;
     }
 
-
-    /* int msg_precheck(const conn_ctx& this_ctx, const std::string& buff_str, struct msg_attr& attr) {
-        attr.msg_attr_reset(); // Reset all the attrbutes.
-        auto is_private_msg = (std::memcmp(buff_str.c_str(), to_user, MSG_ATTR_LEN) == 0);
-        auto is_tagged_msg = (std::memcmp(buff_str.c_str(), tag_user, MSG_ATTR_LEN) == 0);
-        if (is_private_msg || is_tagged_msg) {
-            const size_t start_pos = sizeof(to_user);
-            size_t delim_pos = buff_str.find(user_delim, start_pos);
-            std::string target_user;
-            if (delim_pos == std::string::npos) 
-                target_user = buff_str.substr(start_pos); 
-            else
-                target_user = buff_str.substr(start_pos, delim_pos - start_pos);
-            if (target_user == this_ctx.get_bind_uid())
-                return -1; // User cannot tag or send private messages to self
-                           // Will not set the attrbutes.
-            if (all_users.is_in_db(target_user)) { // If the target uid is valid
-                if (!is_user_signed_in(target_user))
-                    return 1;   // tagged or private message requires target user signed in.
-                                // false will bounce the msg back to sender.
-                                // will not set the attributes.
-                attr.target_uid = target_user;
-                attr.target_ctx_idx = get_client_idx(target_user);
-                attr.is_set = true; // Attributes set.
-                if (!is_private_msg) 
-                    attr.msg_attr_mask = 1; // Public but tagged
-                else
-                    attr.msg_attr_mask = 2; // Private
-                return 0; // msg_attr_mask set and return true
-            }
-            attr.is_set = true; // Attributes set.
-            // If the target user uid is invalid, do nothing
-            return 0;
-        }
-        attr.is_set = true; // Attributes set.
-        // If normal message, do nothing.
-        return 0;
-    } */
-
-    /* Assemble the message header for a connection context
-    std::string assemble_msg_header(const uint64_t& cinfo_hash) {
-        auto ctx_ptr = clnts.get_ctx_by_key(cinfo_hash);
-        if (ctx_ptr == nullptr) 
-            return "";
-        std::string curr_time = get_current_time();
-        std::ostringstream oss;
-        oss << std::endl << curr_time << " [FROM_UID] " 
-            << ctx_ptr->get_bind_uid() << ":" << std::endl << "----  ";
-        return oss.str(); 
-    }*/
-
-    /* Must call msg_precheck first!!!
-    bool update_msg_buffer(std::vector<char>& buffer, const struct msg_attr& attr, const conn_ctx& ctx) {
-        if (!attr.is_set)
-            return false;
-        std::string msg_header = assemble_msg_header(ctx);
-        if (attr.msg_attr_mask != 0)
-            buffer.erase(buffer.begin(), buffer.begin() + MSG_ATTR_LEN + attr.target_uid.size() + 1);
-        if (attr.msg_attr_mask == 1) 
-            msg_header += (std::string("@tagged@") + attr.target_uid + std::string(" "));
-        else if (attr.msg_attr_mask == 2)
-            msg_header += (std::string("*privto*") + attr.target_uid + std::string(" "));
-        buffer.insert(buffer.begin(), msg_header.c_str(), msg_header.c_str() + msg_header.size());
-        buffer.back() = '\n';
-        buffer.push_back('\n');
-        buffer.push_back('\0');
-        return true;
-    }*/
-
     std::string user_list_to_msg () {
         std::string user_list_fmt = users.get_user_list(true);
         std::ostringstream oss;
@@ -1043,20 +974,17 @@ public:
 
                 std::cout << "Received message size invalid." << std::endl;
                 continue; // If size is invalid, ommit.
-            }
-                
-            std::cout << ">> Received from: " << std::endl 
+            }       
+            std::cout << lc_utils::now_time_to_str() << std::endl
+                      << ">> Received from: " << std::endl 
                       << inet_ntoa(client_addr.sin_addr)
                       << ':' << ntohs(client_addr.sin_port) << '\t';
-
             std::cout << std::endl << std::hex << std::setw(2) 
                       << std::setfill('0');
-            
-            for (size_t i = 0; i < bytes_recv; ++ i) {
+            for (size_t i = 0; i < bytes_recv; ++ i) 
                 std::cout << (int)buffer.recv_raw_buffer[i] << ' ';
-            }
-
             std::cout << std::dec << bytes_recv << std::endl;
+            
             auto beg = buffer.recv_raw_buffer.begin();
             size_t offset = 0;
             auto header = buffer.recv_raw_buffer[0];

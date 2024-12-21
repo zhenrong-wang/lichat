@@ -30,7 +30,7 @@ constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
-const std::string prompt = "Enter your input: ";
+const std::string prompt = "Enter your input:";
 const std::string top_bar_msg = 
     "LiChat: Free Software (LIC: MIT) for Free Speech.";
 
@@ -261,8 +261,7 @@ public:
         wrefresh(bottom_win);
     }
 
-    bool refresh_input (const std::string& prompt, 
-        const input_wbuff& input) {
+    bool refresh_input (const std::string& prompt, const input_wbuff& input) {
         if (bottom_win == nullptr) return false;
         int w = getmaxx(bottom_win);
         int start_y = prompt.size() / w, start_x = prompt.size() % w;
@@ -945,9 +944,18 @@ public:
 
         auto w_in = lc_utils::utf8_to_wstr(utf8_in);
         auto w_len = lc_utils::get_wstr_print_len(w_in);
-
+        
+        auto is_single_line = [](const std::wstring& wstr, const size_t& len) {
+            if (lc_utils::get_wstr_print_len(wstr) > len) 
+                return false;
+            for (auto wch : wstr) {
+                if (wch == '\r' || wch == '\n')
+                    return false;
+            }
+            return true;
+        };
         // Handle single line input.
-        if (w_len <= line_len) {
+        if (is_single_line(w_in, line_len)) {
             std::string padding(line_len - w_len, ' ');
             if (left_align)
                 utf8_out = prefix + utf8_in + padding + suffix;
@@ -960,16 +968,21 @@ public:
         // All lines would be left aligned.
         struct split {
             size_t pos;
-            bool padding;
-
-            split (size_t p, bool flag) : pos(p), padding(flag) {}
+            bool pdn;
+            split (size_t p, bool flag) : pos(p), pdn(flag) {}
         };
         utf8_out.clear();
         std::vector<struct split> splits;
         size_t len_tmp = 0;
         splits.push_back(split(0, false));
         for (size_t i = 0; i < w_in.size(); ++ i) {
-            auto char_pw = (w_in[i] <= 0x7FF) ? 1 : 2;
+            if (w_in[i] == '\n' || w_in[i] == '\r') {
+                splits.push_back(split(i + 1, false));
+                len_tmp = 0;
+                continue;
+            }
+            auto char_pw = (!iswprint(w_in[i])) ? 0 : 
+                            ((w_in[i] <= 0x7FF) ? 1 : 2);
             if (len_tmp + char_pw > line_len) {
                 if (len_tmp + char_pw - line_len == char_pw)
                     splits.push_back(split(i, false));
@@ -986,7 +999,7 @@ public:
             len_tmp = splits[idx + 1].pos - splits[idx].pos;
             auto w_substr = w_in.substr(splits[idx].pos, len_tmp);
             auto utf8_substr = lc_utils::wstr_to_utf8(w_substr);
-            if (splits[idx + 1].padding) 
+            if (splits[idx + 1].pdn) 
                 utf8_out += (prefix + utf8_substr + " " + suffix);
             else 
                 utf8_out += (prefix + utf8_substr + suffix);
@@ -1741,19 +1754,24 @@ public:
         while (!heartbeat_timeout && !auto_signout) {
             int res = wget_wch(winmgr.get_bottom_win(), &wch);
             input.bytes = lc_utils::get_wstr_utf8_bytes(input.wstr);
-
-            if (res != OK) {
+            auto input_done = false;
+            if (res != OK) { // key input
                 if (wch == KEY_BACKSPACE) {
-                    if (input.bytes > 0) {
+                    if (input.bytes > 0)
                         input.wstr.pop_back();
-                        -- input.bytes;
-                    }
                     winmgr.refresh_input(prompt, input);
+                    continue;
                 }
-                continue;
+                if (wch != KEY_ENTER) 
+                    continue;
+                else 
+                    input_done = true;
             }
-            if (wch == L'\n' || wch == L'\r' 
-                || input.bytes == INPUT_BUFF_BYTES - 5) {
+            else {
+                if (input.bytes == INPUT_BUFF_BYTES - 1)
+                    input_done = true;
+            }
+            if (input_done) {
                 if (input.bytes == 0) 
                     continue;
                 if (input.wstr == L":q!") {
@@ -1769,14 +1787,13 @@ public:
                 winmgr.clear_input(prompt);
                 continue;
             }
-            if (wch != L'\n') {
-                if (wch == L'\t') 
-                    input.wstr += L"    ";
-                else 
-                    input.wstr.push_back(wch);
-                winmgr.refresh_input(prompt, input);
+            if (wch == L'\t') 
+                input.wstr += L"    ";
+            else if (iswprint(wch) || wch == '\n' || wch == '\r')
+                input.wstr.push_back(wch);
+            else 
                 continue;
-            }
+            winmgr.refresh_input(prompt, input);
         }
         if (heartbeat_timeout) 
             thread_err = T_HEARTBEAT_TIME_OUT;
