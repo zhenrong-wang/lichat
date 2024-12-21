@@ -13,6 +13,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <chrono>
+#include <codecvt>
 
 namespace lc_utils {
 
@@ -252,6 +253,35 @@ namespace lc_utils {
         auto now = std::chrono::system_clock::now();
         std::time_t now_t = std::chrono::system_clock::to_time_t(now);
         return now_t;
+    }
+
+    static std::string wstr_to_utf8 (const std::wstring& wstr) {
+        std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+        return converter.to_bytes(wstr);
+    }
+
+    size_t get_wstr_utf8_bytes (const std::wstring& wstr) {
+        return wstr_to_utf8(wstr).size();
+    }
+
+    static std::wstring utf8_to_wstr (const std::string& utf8_str) {
+        std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+        return converter.from_bytes(utf8_str);
+    }
+
+    size_t get_utf8_chars (const std::string& utf8_str) {
+        return utf8_to_wstr(utf8_str).size();
+    }
+
+    size_t get_wstr_print_len (const std::wstring& wstr) {
+        size_t ret = 0;
+        for (auto wch : wstr) {
+            if (wch <= 0x7FF)
+                ++ ret;
+            else
+                ret += 2;
+        }
+        return ret;
     }
 }
 

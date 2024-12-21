@@ -717,7 +717,7 @@ public:
                     buffer.send_buffer.begin() + offset);
         offset += server_aes_nonce.size();
         if ((offset + sid.size() + cif_bytes.size() + raw_n + 
-            crypto_aead_aes256gcm_ABYTES) > BUFF_SIZE) {
+            crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) {
 
             buffer.send_bytes = offset;
             return 3; // buffer overflow occur.
@@ -796,7 +796,7 @@ public:
     }
 
     size_t broadcasting (const uint8_t *msg, const size_t msg_bytes) {
-        if (1 + crypto_sign_BYTES + msg_bytes > BUFF_SIZE)
+        if (1 + crypto_sign_BYTES + msg_bytes > BUFF_BYTES)
             return 0;
         size_t offset = 0;
         buffer.send_buffer[0] = 0x11;   // Unencrypted message.
@@ -826,7 +826,7 @@ public:
     
     // Broadcasting to all connected clients (include or exclude current/self).
     size_t secure_broadcasting (const uint8_t *msg, const size_t msg_bytes) {
-        if (lc_utils::calc_encrypted_len(msg_bytes) > BUFF_SIZE)
+        if (lc_utils::calc_encrypted_len(msg_bytes) > BUFF_BYTES)
             return 0;
         size_t sent_out = 0;
         for (auto elem : clients.get_ctx_map()) {
