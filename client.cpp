@@ -30,7 +30,7 @@ constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
-const std::string prompt = "Enter your input:";
+const std::string prompt = "Enter your input: ";
 const std::string top_bar_msg = 
     "LiChat: Free Software (LIC: MIT) for Free Speech.";
 
