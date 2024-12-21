@@ -268,9 +268,9 @@ public:
         int start_y = prompt.size() / w, start_x = prompt.size() % w;
         wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
-        mvwprintw(bottom_win, start_y, start_x, "%s [C: %d, B: %d]", 
+        mvwprintw(bottom_win, start_y, start_x, "%s [chars: %d]", 
                   lc_utils::wstr_to_utf8(input.wstr).c_str(), 
-                  input.wstr.size(), lc_utils::get_wstr_utf8_bytes(input.wstr));
+                  input.wstr.size());
         wrefresh(bottom_win);
         return true;
     }
