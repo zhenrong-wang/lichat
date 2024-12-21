@@ -84,12 +84,19 @@ enum winmgr_errors {
 };
 
 struct input_buffer {
-    std::array<char, INPUT_BUFF_SIZE> ibuf;
+    std::array<char, INPUT_BUFF_BYTES> ibuf;
     size_t bytes;
     
     input_buffer () : bytes(0) {
         std::memset(ibuf.data(), '\0', ibuf.size());
     }
+};
+
+struct input_wbuff {
+    std::wstring wstr;
+    size_t bytes;
+
+    input_wbuff () : bytes(0) {};
 };
 
 class window_mgr {
@@ -247,21 +254,23 @@ public:
         int w = getmaxx(bottom_win);
         if (w <= 0) 
             return;
-        int start_y = prompt.size() / w, start_x = prompt.size() % w;
-        wmove(bottom_win, start_y, start_x);
+        //int start_y = prompt.size() / w, start_x = prompt.size() % w;
+        mvwprintw(bottom_win, 0, 0, prompt.c_str());
+        //wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
         wrefresh(bottom_win);
     }
 
     bool refresh_input (const std::string& prompt, 
-        const input_buffer& input) {
+        const input_wbuff& input) {
         if (bottom_win == nullptr) return false;
         int w = getmaxx(bottom_win);
         int start_y = prompt.size() / w, start_x = prompt.size() % w;
         wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
-        mvwprintw(bottom_win, start_y, start_x, "%s [chars: %d]", 
-                  input.ibuf.data(), input.bytes);
+        mvwprintw(bottom_win, start_y, start_x, "%s [C: %d, B: %d]", 
+                  lc_utils::wstr_to_utf8(input.wstr).c_str(), 
+                  input.wstr.size(), lc_utils::get_wstr_utf8_bytes(input.wstr));
         wrefresh(bottom_win);
         return true;
     }
@@ -510,7 +519,8 @@ class lichat_client {
     client_session session;
     key_mgr_25519 client_key;
     msg_buffer buffer;
-    input_buffer input;
+    input_wbuff input;
+    //input_buffer input;
     std::vector<std::string> messages;
     curr_user user;
     window_mgr winmgr;
@@ -522,7 +532,7 @@ public:
         client_fd(-1), server_pk_mgr(client_server_pk_mgr()), 
         key_dir(default_key_dir), session(client_session()), 
         client_key(key_mgr_25519(key_dir, "client_")), buffer(msg_buffer()), 
-        input(input_buffer()), user(curr_user()), winmgr(window_mgr()),
+        input(input_wbuff()), user(curr_user()), winmgr(window_mgr()),
         last_error(0) {
 
         server_port = DEFAULT_SERVER_PORT;
@@ -629,7 +639,7 @@ public:
             return -1;
 
         if ((1 + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
-            raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_SIZE) 
+            raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) 
             return -3;
 
         auto aes_key = curr_s.get_aes256gcm_key();
@@ -656,7 +666,7 @@ public:
         offset += client_aes_nonce.size();
 
         if ((offset + sid.size() + raw_n + crypto_aead_aes256gcm_ABYTES) > 
-            BUFF_SIZE) {
+            BUFF_BYTES) {
             buff.send_bytes = offset;
             return -3; // buffer overflow occur.
         }
@@ -918,10 +928,10 @@ public:
     // timestamp,uname(or system), msg_body
     // Currenty this only handles narrow chars, not wide chars.
 
-    static int fmt_for_print (std::string& out, const std::string& in, 
+    static int fmt_for_print (std::string& utf8_out, const std::string& utf8_in, 
         const int col_start, const int col_end, const int win_width,
         const bool left_align) {
-        if (in.empty())
+        if (utf8_in.empty())
             return -1;
         if (win_width <= 2 || col_start < 0 || col_end <= 0)
             return 1;
@@ -933,48 +943,80 @@ public:
         std::string prefix(prefix_len, ' ');
         std::string suffix(suffix_len, ' ');
 
+        auto w_in = lc_utils::utf8_to_wstr(utf8_in);
+        auto w_len = lc_utils::get_wstr_print_len(w_in);
+
         // Handle single line input.
-        if (in.size() <= line_len) {
-            std::string padding(line_len - in.size(), ' ');
+        if (w_len <= line_len) {
+            std::string padding(line_len - w_len, ' ');
             if (left_align)
-                out = prefix + in + padding + suffix;
+                utf8_out = prefix + utf8_in + padding + suffix;
             else 
-                out = prefix + padding + in + suffix;
+                utf8_out = prefix + padding + utf8_in + suffix;
             return 0;
         }
         
         // Handle multiple line input.
         // All lines would be left aligned.
-        size_t lines = ((in.size() % line_len) == 0) ? (in.size() / line_len)
-                       : (in.size() / line_len + 1);
-        out.clear();
-        size_t pos = 0;
-        for (size_t i = 0; i < lines - 1; ++ i) {
-            out += (prefix + in.substr(pos, line_len) + suffix);
-            pos += line_len;
+        struct split {
+            size_t pos;
+            bool padding;
+
+            split (size_t p, bool flag) : pos(p), padding(flag) {}
+        };
+        utf8_out.clear();
+        std::vector<struct split> splits;
+        size_t len_tmp = 0;
+        splits.push_back(split(0, false));
+        for (size_t i = 0; i < w_in.size(); ++ i) {
+            auto char_pw = (w_in[i] <= 0x7FF) ? 1 : 2;
+            if (len_tmp + char_pw > line_len) {
+                if (len_tmp + char_pw - line_len == char_pw)
+                    splits.push_back(split(i, false));
+                else 
+                    splits.push_back(split(i, true));
+                len_tmp = char_pw;
+            }
+            else {
+                len_tmp += char_pw;
+            }
         }
-        std::string padding((line_len - in.size() % line_len), ' ');
-        out += prefix + in.substr(pos) + padding + suffix;
+        size_t idx = 0;
+        while (idx < splits.size() - 1) {
+            len_tmp = splits[idx + 1].pos - splits[idx].pos;
+            auto w_substr = w_in.substr(splits[idx].pos, len_tmp);
+            auto utf8_substr = lc_utils::wstr_to_utf8(w_substr);
+            if (splits[idx + 1].padding) 
+                utf8_out += (prefix + utf8_substr + " " + suffix);
+            else 
+                utf8_out += (prefix + utf8_substr + suffix);
+            ++ idx;
+        }
+        auto w_substr_last = w_in.substr(splits[idx].pos);
+        auto w_substr_last_len = lc_utils::get_wstr_print_len(w_substr_last);
+        std::string padding(line_len - w_substr_last_len, ' ');
+        utf8_out += prefix + lc_utils::wstr_to_utf8(w_substr_last) + 
+                    padding + suffix;
         return 0;
     }
 
-    static int fmt_prnt_msg (WINDOW *win, const std::string& raw_msg,
+    static int fmt_prnt_msg (WINDOW *win, const std::string& utf8_msg,
         const std::string& uname) {
 
         if (win == nullptr)
             return -1;
-        if (raw_msg.size() == 0)
+        if (utf8_msg.empty())
             return 1;
-        auto parsed_msg = lc_utils::split_buffer((uint8_t *)raw_msg.data(), 
-                          raw_msg.size(), ',', 3);
+        
+        // The standard format:
+        // timestamp,sender_uname,utf8_msg_body
+        auto parsed_msg = lc_utils::split_buffer((uint8_t *)utf8_msg.data(), 
+                          utf8_msg.size(), ',', 3);
         if (parsed_msg.size() < 3)
             return 3; // Not a valid message
-        //wprintw(win, "%s\n", raw_msg.c_str());
-        //wrefresh(win);
-        
         std::string timestmp = parsed_msg[0];
         std::string msg_uname = parsed_msg[1];
-        std::string bare_msg = raw_msg.substr(parsed_msg[0].size() + 1 + 
+        std::string bare_msg = utf8_msg.substr(parsed_msg[0].size() + 1 + 
                                               parsed_msg[1].size() + 1);
         
         if (bare_msg.empty())
@@ -1103,7 +1145,7 @@ public:
             return -1;
 
         if ((1 + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
-            raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_SIZE) 
+            raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) 
             return -3;
 
         auto aes_key = curr_s.get_aes256gcm_key();
@@ -1130,7 +1172,7 @@ public:
         offset += client_aes_nonce.size();
 
         if ((offset + sid.size() + raw_n + crypto_aead_aes256gcm_ABYTES) > 
-            BUFF_SIZE) {
+            BUFF_BYTES) {
             buffer.send_bytes = offset;
             return -3; // buffer overflow occur.
         }
@@ -1691,49 +1733,46 @@ public:
             session, server_pk_mgr, user, client_key, messages, thread_err));
         std::thread heartbeat(thread_heartbeat);
 
+        wint_t wch = 0;
+
         // heartbeat_timeout: timeout exit
         // auto_signout: signed in on another client.
         // q!: normal exit
         while (!heartbeat_timeout && !auto_signout) {
-            int ch = wgetch(winmgr.get_bottom_win());
-            if (ch == '\n' || ch == '\r' || 
-                input.bytes == input.ibuf.size() - 5) {
+            int res = wget_wch(winmgr.get_bottom_win(), &wch);
+            input.bytes = lc_utils::get_wstr_utf8_bytes(input.wstr);
+
+            if (res != OK) {
+                if (wch == KEY_BACKSPACE) {
+                    input.wstr.pop_back();
+                    winmgr.refresh_input(prompt, input);
+                }
+                continue;
+            }
+            if (wch == L'\n' || wch == L'\r' 
+                || input.bytes == INPUT_BUFF_BYTES - 5) {
                 if (input.bytes == 0) 
                     continue;
-                if (input.bytes == 3 && 
-                    std::strcmp(input.ibuf.data(), ":q!") == 0) {
+                if (input.wstr == L":q!") {
                     send_gby_req.store(true);
-                    wgetch(winmgr.get_bottom_win());
+                    wget_wch(winmgr.get_bottom_win(), &wch);
                     break;
                 }
                 mtx.lock();
-                send_msg_body = std::string(input.ibuf.data());
+                send_msg_body = lc_utils::wstr_to_utf8(input.wstr);
                 mtx.unlock();
                 send_msg_req.store(true);
-                std::memset(input.ibuf.data(), '\0', input.bytes);
-                input.bytes = 0;
+                input.wstr = L"";
                 winmgr.clear_input(prompt);
                 continue;
             }
-            if (ch != '\n' && (isprint(ch) || ch == '\t')) {
-                if (ch == '\t') {
-                    for (size_t i = 0; i < 4; ++ i) {
-                        input.ibuf[input.bytes] = ' ';
-                        ++ input.bytes;
-                    }
-                }
-                else {
-                    input.ibuf[input.bytes] = ch;
-                    ++ input.bytes;
-                }
+            if (wch != L'\n') {
+                if (wch == L'\t') 
+                    input.wstr += L"    ";
+                else 
+                    input.wstr.push_back(wch);
                 winmgr.refresh_input(prompt, input);
                 continue;
-            }
-            if (ch == KEY_BACKSPACE) {
-                if (input.bytes > 0) 
-                    -- input.bytes;
-                input.ibuf[input.bytes] = '\0';
-                winmgr.refresh_input(prompt, input);
             }
         }
         if (heartbeat_timeout) 

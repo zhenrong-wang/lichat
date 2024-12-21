@@ -9,26 +9,26 @@
 #include "sodium.h"
 
 struct msg_buffer {
-    std::array<uint8_t, BUFF_SIZE> recv_raw_buffer;
+    std::array<uint8_t, BUFF_BYTES> recv_raw_buffer;
     ssize_t recv_raw_bytes;
 
     // A buffer to handle aes decryption
-    std::array<uint8_t, BUFF_SIZE> recv_aes_buffer;
+    std::array<uint8_t, BUFF_BYTES> recv_aes_buffer;
     ssize_t recv_aes_bytes;
 
-    std::array<uint8_t, BUFF_SIZE> send_aes_buffer;
+    std::array<uint8_t, BUFF_BYTES> send_aes_buffer;
     ssize_t send_aes_bytes;
 
     // A buffer to send aes_encrypted messages
-    std::array<uint8_t, BUFF_SIZE> send_buffer;
+    std::array<uint8_t, BUFF_BYTES> send_buffer;
     ssize_t send_bytes;
 
     msg_buffer() : recv_raw_bytes(0), recv_aes_bytes(0), send_aes_bytes(0), 
     send_bytes(0) {}
 
     static ssize_t size_to_clear(ssize_t bytes) {
-        if(bytes < 0 || bytes >= BUFF_SIZE)
-            return BUFF_SIZE;
+        if(bytes < 0 || bytes >= BUFF_BYTES)
+            return BUFF_BYTES;
         return bytes;
     }
 
