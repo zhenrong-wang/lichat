@@ -93,6 +93,7 @@ constexpr char input_password[] = "\nPassword format:\n1) 4-32 ascii chars.\n\
 2) Must contain at least 3 types, must contain special char(s):\n\
    [lowercase]: a-z\n   [UPPERCASE]: A-Z\n   [#numbers#]: 0-9\n\
    [special_c]: ~!@#$%^&(){}[]-_=+;:,.<>/|\n\nPassword: ";
+constexpr char retype_password[] = "Re-type to confirm: ";
 constexpr char connection_reset[] = "This connection has been reset.\n\n";
 constexpr char s_signout[5] = {'[', '(', '!', ')', ']'};
 constexpr char s_signout_msg[] = "You've signed in on another client. \

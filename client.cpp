@@ -1271,13 +1271,16 @@ public:
     }
 
     bool user_input (const std::string& prompt, 
-        std::string& dest_str, size_t max_times, 
+        std::string& dest_str, size_t max_times, bool is_password,
         const std::function<int(const std::string&)>& fmt_check_func) {
         size_t retry = 0;
         bool fmt_correct = false;
         std::cout << prompt;
         while (retry < max_times) {
-            std::getline(std::cin, dest_str);
+            if (is_password) 
+                dest_str = lc_utils::getpass_stdin("");
+            else 
+                std::getline(std::cin, dest_str);
             ++ retry;
             if (fmt_check_func(dest_str) != 0) {
                 std::cout << "Invalid format. Please retry (" 
@@ -1664,7 +1667,7 @@ public:
             }
             if (status == 3) {
                 std::string option, login_type, uemail, uname, password;
-                if (!user_input(main_menu, option, CLIENT_INPUT_RETRY, 
+                if (!user_input(main_menu, option, CLIENT_INPUT_RETRY, false,
                     [](const std::string& op) {
                     if (op == "1" || op == "2" || op == "signup" || 
                         op == "signin") return 0;
@@ -1672,20 +1675,28 @@ public:
                 })) continue;
                 if (option == "1" || option == "signup") { // Signing up, require email, username & password
                     if (!user_input(input_email, uemail, CLIENT_INPUT_RETRY, 
-                        lc_utils::email_fmt_check))  
+                        false, lc_utils::email_fmt_check))  
                         continue;
 
                     if (!user_input(input_username, uname, CLIENT_INPUT_RETRY, 
-                        lc_utils::user_name_fmt_check)) 
+                        false, lc_utils::user_name_fmt_check)) 
                         continue;
 
                     if (!user_input(input_password, password, 
-                        CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
+                        CLIENT_INPUT_RETRY, true, lc_utils::pass_fmt_check))
                         continue;
+                    
+                    std::string re = lc_utils::getpass_stdin(retype_password);
+                    if (re != password) {
+                        std::cout << "Failed to confirm your password.\n";
+                        password.clear();
+                        re.clear();
+                        continue;
+                    }
                 }
                 else {
                     if (!user_input(choose_login, login_type, 
-                        CLIENT_INPUT_RETRY, [](const std::string& op) {
+                        CLIENT_INPUT_RETRY, false, [](const std::string& op) {
                         if (op == "1" || op == "2" || op == "email" || 
                             op == "username") return 0;
                         return 1;
@@ -1693,16 +1704,17 @@ public:
 
                     if (login_type == "1" || login_type == "email") {
                         if (!user_input(input_email, uemail, CLIENT_INPUT_RETRY,
-                            lc_utils::email_fmt_check))
+                            false, lc_utils::email_fmt_check))
                             continue;
                     }
                     else {
                         if (!user_input(input_username, uname, 
-                            CLIENT_INPUT_RETRY, lc_utils::user_name_fmt_check))
+                            CLIENT_INPUT_RETRY, false, 
+                            lc_utils::user_name_fmt_check))
                             continue;
                     }
                     if (!user_input(input_password, password, 
-                        CLIENT_INPUT_RETRY, lc_utils::pass_fmt_check))
+                        CLIENT_INPUT_RETRY, true, lc_utils::pass_fmt_check))
                         continue;
                 }
                 std::array<char, crypto_pwhash_STRBYTES> hashed_pwd;

@@ -1,16 +1,25 @@
 #ifndef LC_COMMON_H
 #define LC_COMMON_H
 
+#include "lc_consts.hpp"
+#include "lc_keymgr.hpp"
 #include <iostream>
 #include <regex>
 #include <array>
 #include <vector>
 #include <cstring>
 #include "sodium.h"
-#include "lc_consts.hpp"
-#include "lc_keymgr.hpp"
 #include <iostream>
 #include <netdb.h>
+#include <cstring>
+
+#ifndef _WIN32
+#define _GNU_SOURCE 1
+#include <termios.h> // For Unix terminal password input
+#else
+#include <conio.h> // For Windows terminal password input
+#endif
+
 #include <arpa/inet.h>
 #include <chrono>
 #include <codecvt>
@@ -255,20 +264,24 @@ namespace lc_utils {
         return now_t;
     }
 
+    // Convert a wide string to UTF-8
     static std::string wstr_to_utf8 (const std::wstring& wstr) {
         std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
         return converter.to_bytes(wstr);
     }
 
+    // Get the real bytes of converted wide string (to UTF-8) 
     size_t get_wstr_utf8_bytes (const std::wstring& wstr) {
         return wstr_to_utf8(wstr).size();
     }
 
+    // Convert a UTF-8 string to wide string
     static std::wstring utf8_to_wstr (const std::string& utf8_str) {
         std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
         return converter.from_bytes(utf8_str);
     }
 
+    // Calculate the actual characters of a UTF-8 string
     size_t get_utf8_chars (const std::string& utf8_str) {
         return utf8_to_wstr(utf8_str).size();
     }
@@ -282,6 +295,68 @@ namespace lc_utils {
                 ret += 2;
         }
         return ret;
+    }
+
+    std::string getpass_stdin (const std::string& prompt) {
+        std::string p;
+        char backspace = '\b', ch = '\0';
+        int i = 0;
+    #ifndef _WIN32
+        struct termios prev_term, new_term;
+        char ENTER='\n';
+    #else
+        char ENTER='\r';
+    #endif
+        std::cout << prompt << "[s] ";
+    #ifdef _WIN32
+        while((ch=_getch()) != ENTER && i < PASSWORD_MAX_BYTES) {
+            if (ch != backspace && ch != '\t' && ch != ' ') {
+                p.push_back(ch);
+                putchar('*');
+                ++ i;
+            }
+            else if (ch == backspace) {
+                if (i==0)
+                    continue;
+                else {
+                    printf("\b \b");
+                    -- i;
+                    p.pop_back();
+                }
+            }
+        }
+    #else
+        bool echo_disabled = false;
+        if (tcgetattr(fileno(stdin), &prev_term) != 0)
+            std::cout << "[(!)] Warn: failed to disable echo.";
+        else {
+            new_term = prev_term;
+            new_term.c_lflag &= ~ECHO;
+            if (tcsetattr(fileno(stdin), TCSAFLUSH, &new_term) != 0) {
+                std::cout << "[(!)] Warn: failed to disable echo.";
+                tcsetattr(fileno(stdin), TCSAFLUSH, &prev_term);
+            }
+            else 
+                echo_disabled = true;
+        }
+        while((ch = getchar()) != ENTER && i < PASSWORD_MAX_BYTES) {
+            if(ch != backspace && ch != '\t' && ch != ' ') {
+                p.push_back(ch);
+                ++ i;
+            }
+            else if (ch == backspace) {
+                if(i == 0)
+                    continue;
+                else{
+                    -- i; p.pop_back();
+                }
+            }
+        }
+        if (echo_disabled)
+            tcsetattr(fileno(stdin), TCSAFLUSH, &prev_term);
+    #endif
+        std::cout << std::endl;
+        return p;
     }
 }
 
