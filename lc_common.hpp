@@ -302,13 +302,13 @@ namespace lc_utils {
         char backspace = '\b', ch = '\0';
     #ifndef _WIN32
         struct termios prev_term, new_term;
-        char ENTER='\n';
+        char enter = '\n';
     #else
-        char ENTER='\r';
+        char enter = '\r';
     #endif
         std::cout << prompt << "[s] ";
     #ifdef _WIN32
-        while((ch=_getch()) != ENTER && p.size() <= PASSWORD_MAX_BYTES) {
+        while((ch=_getch()) != enter && p.size() <= PASSWORD_MAX_BYTES) {
             if (ch != backspace && ch != '\t' && ch != ' ') {
                 p.push_back(ch);
                 putchar('*');
@@ -336,7 +336,7 @@ namespace lc_utils {
             else 
                 echo_disabled = true;
         }
-        while((ch = getchar()) != ENTER && p.size() <= PASSWORD_MAX_BYTES) {
+        while((ch = getchar()) != enter && p.size() <= PASSWORD_MAX_BYTES) {
             if(ch != backspace && ch != '\t' && ch != ' ') 
                 p.push_back(ch);
             else if (ch == backspace) {
