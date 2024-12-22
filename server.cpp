@@ -21,26 +21,21 @@
 #include <unordered_map>
 #include <chrono>
 #include <thread>
+#include <thread>
 #include <ctime>
 #include <fstream>
 #include <regex>
 #include <random>
 #include <iomanip>
 
-struct msg_attr {
-    uint8_t msg_attr_mask;  // 00 - public & untagged;
-                            // 01 - public but tagged (target_uid and target_ctx_idx valid)
-                            // 02 - private (target_uid and target_ctx_idx valid)
-    std::string target_uid;
-    ssize_t target_ctx_idx;
-    bool is_set;
-
-    void msg_attr_reset () {
-        msg_attr_mask = 0;
-        target_uid.clear();
-        target_ctx_idx = -1;
-        is_set = false;
-    }
+enum SERVER_ERRORS {
+    NORMAL_RETURN = 0,
+    KEYMGR_FAILED,
+    SOCK_FD_INVALID,
+    SOCK_BIND_FAILED,
+    SET_TIMEOUT_FAILED,
+    INTERNAL_FATAL,
+    MSG_SIGNING_FAILED
 };
 
 // We use AES256-GCM algorithm here
@@ -55,7 +50,8 @@ class session_item {
     std::array<uint8_t, SID_BYTES> server_sid;
     std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes256gcm_key;
 
-    struct sockaddr_in src_addr;   // the updated source_ddress. 
+    struct sockaddr_in src_addr;   // the updated source_ddress.
+    time_t last_heartbeat;
 
     //  0 - empty
     //  1 - prepared: cid + public_key + real cinfo_hash + server_sid + AES_key
@@ -132,6 +128,18 @@ public:
         status = 2;
         return true;
     }
+    const time_t& get_last_heartbeat () {
+        return last_heartbeat;
+    }
+    void set_last_heartbeat (time_t t) {
+        last_heartbeat = t;
+    }
+    bool is_inactive () {
+        if (lc_utils::now_time() - last_heartbeat > HEARTBEAT_TIMEOUT_SECS) 
+            return true;
+        else 
+            return false;
+    }
 };
 
 struct session_pool_stats {
@@ -186,12 +194,8 @@ public:
     const bool is_session_stored (uint64_t key) {
         return (get_session(key) != nullptr);
     }
-    bool delete_session (uint64_t key) {
-        auto ptr = get_session(key);
-        if (ptr == nullptr)
-            return false;
-        auto status = ptr->get_status();
-        sessions.erase(key);
+
+    void update_stats_at_session_delete (int status) {
         -- stats.total;
         if (status == 0 || status == 1)
             -- stats.empty;
@@ -201,6 +205,15 @@ public:
             -- stats.active;
         else
             -- stats.recycled;
+    }
+
+    bool delete_session (uint64_t key) {
+        auto ptr = get_session(key);
+        if (ptr == nullptr)
+            return false;
+        auto status = ptr->get_status();
+        sessions.erase(key);
+        update_stats_at_session_delete(status);
         return true;
     }
     int activate_session (uint64_t key) {
@@ -213,6 +226,12 @@ public:
             return 0;
         }
         return 1;
+    }
+    std::unordered_map<uint64_t, session_item>& get_session_map () {
+        return sessions;
+    }
+    struct session_pool_stats& get_stats () {
+        return stats;
     }
 };
 
@@ -305,6 +324,7 @@ struct user_item {
     std::array<char, crypto_pwhash_STRBYTES> pass_hash;      // Hashed password
 
     uint8_t user_status;        // Currently, 0 - not in, 1 - signed in.
+    uint64_t bind_cif;
 };
 
 
@@ -525,19 +545,43 @@ public:
         return list_with_status;
     }
 
-    // type = 0: uemail + password
-    // type = 1 (or others): uname + password
-    bool set_user_status (const uint8_t type, const std::string& str, 
-        const uint8_t status) {
+    user_item *get_user_item (const uint8_t type, const std::string& str) {
+        if (type == 0x00)
+            return get_user_item_by_uemail(str);
+        else 
+            return get_user_item_by_uname(str);
+    }
 
+    // type = 0: uemail
+    // type = 1 (or others): uname
+    bool bind_user_ctx (const uint8_t type, const std::string& str, 
+        const uint64_t& cif) {
+        auto ptr_user = get_user_item(type, str);
+        if (ptr_user == nullptr)
+            return false;
+        ptr_user->user_status = 1;
+        ptr_user->bind_cif = cif;
+        return true;
+    }
+
+    bool unbind_user_ctx (const uint8_t type, const std::string& str) {
         user_item *ptr_item = nullptr;
-        if (type == 0x00) 
-            ptr_item = get_user_item_by_uemail(str);
-        else
-            ptr_item = get_user_item_by_uname(str);
+        auto ptr_user = get_user_item(type, str);
         if (ptr_item == nullptr)
             return false;
-        ptr_item->user_status = status;
+        ptr_item->user_status = 0;
+        ptr_item->bind_cif = 0;
+        return true;
+    }
+
+    bool get_bind_cif (const uint8_t type, const std::string& str, 
+        uint64_t& cif) {
+        auto ptr_user = get_user_item(type, str);
+        if (ptr_user == nullptr)
+            return false;
+        if (ptr_user->user_status == 0)
+            return false;
+        cif = ptr_user->bind_cif;
         return true;
     }
 
@@ -610,13 +654,13 @@ public:
     bool start_server (void) {
         if (key_mgr.key_mgr_init() != 0) {
             std::cout << "Key manager not activated." << std::endl;
-            return close_server(1);
+            return close_server(KEYMGR_FAILED);
         }
         server_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (server_fd == -1)
-            return close_server(3);
+            return close_server(SOCK_FD_INVALID);
         if (bind(server_fd, (sockaddr *)&server_addr, (socklen_t)sizeof(server_addr)))
-            return close_server(5);
+            return close_server(SOCK_BIND_FAILED);
         std::cout << "LightChat (LiChat) Service started." << std::endl 
                   << "UDP Listening Port: " << server_port << std::endl;
         return true;
@@ -941,33 +985,71 @@ public:
         return false;
     }
 
+    // Check all the connections and delete any inactive connections and their
+    // contexts. Update the user status.
+    void check_all_conns () {
+        auto& map = conns.get_session_map();
+        uint64_t cif_curr = 0;
+        for (auto it = map.begin(); it != map.end(); ) {
+            if (it->second.is_inactive()) {
+                auto cif = it->first;
+                auto p_ctx = clients.get_ctx(cif);
+                if (p_ctx) {
+                    auto uid = p_ctx->get_bind_uid();
+                    if (users.get_bind_cif(0, uid, cif_curr) && cif_curr == cif)
+                        users.unbind_user_ctx(0, uid);
+                    clients.delete_ctx(cif);
+                }
+                auto status = it->second.get_status();
+                it = map.erase(it);
+                conns.update_stats_at_session_delete(status);
+            }
+            else {
+                ++ it;
+            }
+        }
+    }
+
     // Main processing method.
     bool run_server (void) {
         if (!key_mgr.is_activated()) {
             std::cout << "Key manager not activated." << std::endl;
-            return 1;
+            return close_server(KEYMGR_FAILED);
         }
         if (server_fd == -1) {
             std::cout << "Server not started." << std::endl;
-            return 3;
+            return close_server(SOCK_FD_INVALID);
         }
-        
-        //auto server_public_key = key_mgr.get_crypto_pk();
-        //auto server_sign_key = key_mgr.get_sign_pk();
-
+        struct timeval tv;
+        tv.tv_sec = SERVER_RECV_WAIT_SECS;
+        tv.tv_usec = 0;
+        if (setsockopt(server_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, 
+            sizeof(tv)) < 0) {
+            return close_server(SET_TIMEOUT_FAILED);
+        }
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
         size_t aes_encrypted_len = 0;
         size_t aes_decrypted_len = 0;
         std::string timestamp;
+        time_t check_t = lc_utils::now_time();
         while (true) {
+            // Server checks all connections
+            if (lc_utils::now_time() - check_t >= SERVER_CONNS_CHECK_SECS) {
+                std::cout << "Checking all connections ..." << std::endl;
+                check_all_conns();
+                check_t = lc_utils::now_time();
+            }
             struct sockaddr_in client_addr;
             auto addr_len = sizeof(client_addr);
             unsigned long long unsign_len = 0, sign_len = 0;
             buffer.clear_buffer();
             auto bytes_recv = recvfrom(server_fd, buffer.recv_raw_buffer.data(), 
-                                    buffer.recv_raw_buffer.size(), 0, 
-                                    (struct sockaddr *)&client_addr, 
-                                    (socklen_t *)&addr_len);
+                                       buffer.recv_raw_buffer.size(), 0, 
+                                       (struct sockaddr *)&client_addr, 
+                                       (socklen_t *)&addr_len);
+            if (bytes_recv < 0)
+                continue;
+
             buffer.recv_raw_bytes = bytes_recv;
             if (buffer.recved_insuff_bytes(SERVER_RECV_MIN_BYTES) || 
                 buffer.recved_overflow()) {
@@ -1031,7 +1113,7 @@ public:
                     simple_send(client_addr, 
                                 (const uint8_t *)server_internal_fatal, 
                                 sizeof(server_internal_fatal));
-                    return close_server(127);
+                    return close_server(INTERNAL_FATAL);
                 }
                 this_conn->set_src_addr(client_addr);
                 if (header == 0x00)
@@ -1181,7 +1263,7 @@ public:
                     if (crypto_sign(packet.data() + 1, &sign_len, 
                         recved_cif_bytes.data(), recved_cif_bytes.size(), 
                         key_mgr.get_sign_sk().data()) != 0) 
-                        return close_server(7);
+                        return close_server(MSG_SIGNING_FAILED);
                     simple_send(client_addr, packet.data(), packet.size());
                     continue;
                 }
@@ -1196,6 +1278,9 @@ public:
                 clients.delete_ctx(recved_cif);
                 // Delete all the session data.
                 conns.delete_session(recved_cif);
+
+                // User signed off.
+                users.unbind_user_ctx(0, uemail);
                 
                 timestamp = lc_utils::now_time_to_str();
                 std::string bcast_msg = 
@@ -1272,7 +1357,7 @@ public:
 
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
-                        users.set_user_status(0, reg_info[0], 1);
+                        users.bind_user_ctx(0, reg_info[0], cinfo_hash);
                         timestamp = lc_utils::now_time_to_str();
                         std::string bcast_msg = 
                             timestamp + ",[SYSTEM_BCAST]," + reg_info[1] + 
@@ -1315,17 +1400,15 @@ public:
                                 
                     this_client->set_bind_uid(uemail);
                     this_client->set_status(2);
-                    users.set_user_status(0, uemail, 1);
-
                     uint64_t prev_cif = 0;
-                    if (clients.clear_ctx_by_uid(cinfo_hash, uemail, prev_cif))
-                    {
+                    if (users.get_bind_cif(0, uemail, prev_cif)) {
                         timestamp = lc_utils::now_time_to_str();
                         simple_secure_send(0x10, prev_cif, 
                             (const uint8_t *)s_signout, sizeof(s_signout));
                         clients.delete_ctx(prev_cif);
                         conns.delete_session(prev_cif);
                     }
+                    users.bind_user_ctx(0, uemail, cinfo_hash);
                     timestamp = lc_utils::now_time_to_str();
                     std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
                                             uname + " signed in!";

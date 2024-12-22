@@ -73,11 +73,17 @@ constexpr size_t HEARTBEAT_TIMEOUT_SECS = 180;
 constexpr size_t HEARTBEAT_THREAD_SLEEP_MS = 500;
 constexpr size_t HEARTBEAT_BYTES = 1 + crypto_sign_BYTES + CIF_BYTES;
 
+// Every XX minutes, the server would check all the connections.
+constexpr size_t SERVER_CONNS_CHECK_SECS = 900;
+
 // A goodbye packet is a special heartbeating packet with an extra byte '!'
 constexpr size_t GOODBYE_BYTES = HEARTBEAT_BYTES + 1;
 
 // Handshake related
 constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
+
+// Server receive wait
+constexpr size_t SERVER_RECV_WAIT_SECS = 10;
 
 // Some useful strings.
 constexpr char server_internal_fatal[] = "Server internal fatal error.\n";
