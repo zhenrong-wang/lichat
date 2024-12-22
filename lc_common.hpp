@@ -300,7 +300,6 @@ namespace lc_utils {
     std::string getpass_stdin (const std::string& prompt) {
         std::string p;
         char backspace = '\b', ch = '\0';
-        int i = 0;
     #ifndef _WIN32
         struct termios prev_term, new_term;
         char ENTER='\n';
@@ -309,18 +308,16 @@ namespace lc_utils {
     #endif
         std::cout << prompt << "[s] ";
     #ifdef _WIN32
-        while((ch=_getch()) != ENTER && i < PASSWORD_MAX_BYTES) {
+        while((ch=_getch()) != ENTER && p.size() <= PASSWORD_MAX_BYTES) {
             if (ch != backspace && ch != '\t' && ch != ' ') {
                 p.push_back(ch);
                 putchar('*');
-                ++ i;
             }
             else if (ch == backspace) {
-                if (i==0)
+                if (p.size() == 0)
                     continue;
                 else {
                     printf("\b \b");
-                    -- i;
                     p.pop_back();
                 }
             }
@@ -339,17 +336,14 @@ namespace lc_utils {
             else 
                 echo_disabled = true;
         }
-        while((ch = getchar()) != ENTER && i < PASSWORD_MAX_BYTES) {
-            if(ch != backspace && ch != '\t' && ch != ' ') {
+        while((ch = getchar()) != ENTER && p.size() <= PASSWORD_MAX_BYTES) {
+            if(ch != backspace && ch != '\t' && ch != ' ') 
                 p.push_back(ch);
-                ++ i;
-            }
             else if (ch == backspace) {
-                if(i == 0)
+                if(p.size() == 0)
                     continue;
-                else{
-                    -- i; p.pop_back();
-                }
+                else
+                    p.pop_back();
             }
         }
         if (echo_disabled)
