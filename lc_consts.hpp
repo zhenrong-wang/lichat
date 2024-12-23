@@ -86,7 +86,7 @@ constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
 constexpr size_t SERVER_RECV_WAIT_SECS = 10;
 
 // Some useful strings.
-constexpr char server_internal_fatal[] = "Server internal fatal error.\n";
+constexpr char fatal_error[] = "Server internal fatal error.\n";
 constexpr char restart_handshake[] = "Session failed. Restart handshake.\n";
 constexpr char main_menu[] = "1. signup\n2. signin\n\
 Please choose (1 | 2) or (signup | signin): ";
