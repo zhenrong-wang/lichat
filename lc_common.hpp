@@ -21,8 +21,6 @@
 #endif
 #include <arpa/inet.h>
 #include <chrono>
-#include <unicode/unistr.h>
-#include <unicode/ucnv.h>
 
 namespace lc_utils {
 
@@ -263,47 +261,6 @@ namespace lc_utils {
         std::time_t now_t = std::chrono::system_clock::to_time_t(now);
         return now_t;
     }
-
-    // Convert a wide string to UTF-8
-    static std::string wstr_to_utf8 (const std::wstring& wstr) {
-        //std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-        //return converter.to_bytes(wstr);
-        icu::UnicodeString ustr;
-        if (sizeof(wchar_t) == 2)
-            ustr = icu::UnicodeString(
-                reinterpret_cast<const UChar *>(wstr.data(), wstr.size()));
-        else
-            ustr = icu::UnicodeString::fromUTF32(
-                reinterpret_cast<const UChar32 *>(wstr.data()), wstr.size());
-        std::string utf8_str;
-        ustr.toUTF8String(utf8_str);
-        return utf8_str;
-    }
-
-    // Get the real bytes of converted wide string (to UTF-8) 
-    size_t get_wstr_utf8_bytes (const std::wstring& wstr) {
-        return wstr_to_utf8(wstr).size();
-    }
-
-    // Calculate the actual characters of a UTF-8 string
-    int32_t get_utf8_chars (const std::string& utf8_str) {
-        return icu::UnicodeString::fromUTF8(utf8_str).countChar32();
-    }
-
-    size_t get_ustr_print_len (const icu::UnicodeString& ustr) {
-        size_t ret = 0;
-        auto chars = ustr.countChar32();
-        for (int32_t i = 0; i < chars; ) {
-            auto wch = ustr.char32At(i);
-            if (wch <= 0x7FF)
-                ++ ret;
-            else
-                ret += 2;
-            i = ustr.moveIndex32(i, 1);
-        }
-        return ret;
-    }
-
     std::string getpass_stdin (const std::string& prompt) {
         std::string p;
         char backspace = '\b', ch = '\0';
