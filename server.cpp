@@ -784,8 +784,8 @@ public:
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
             buffer.send_buffer.data() + offset, 
-            (unsigned long long *)&aes_encrypted_len,
-            (const uint8_t *)buffer.send_aes_buffer.data(),
+            reinterpret_cast<unsigned long long *>(&aes_encrypted_len),
+            reinterpret_cast<const uint8_t *>(buffer.send_aes_buffer.data()),
             buffer.send_aes_bytes, 
             NULL, 0, NULL, 
             server_aes_nonce.data(), aes_key.data()
@@ -1037,8 +1037,8 @@ public:
             return close_server(SET_TIMEOUT_FAILED);
         }
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
-        size_t aes_encrypted_len = 0;
-        size_t aes_decrypted_len = 0;
+        size_t aes_enc_len = 0;
+        size_t aes_dec_len = 0;
         std::string timestamp;
         time_t check_t = lc_utils::now_time();
         while (true) {
@@ -1122,8 +1122,8 @@ public:
                 auto this_conn = conns.get_session(cinfo_hash);
                 if (this_conn == nullptr) {
                     simple_send(client_addr, 
-                                (const uint8_t *)server_internal_fatal, 
-                                sizeof(server_internal_fatal));
+                                reinterpret_cast<const uint8_t *>(fatal_error), 
+                                sizeof(fatal_error));
                     return close_server(INTERNAL_FATAL);
                 }
                 this_conn->set_src_addr(client_addr);
@@ -1175,19 +1175,19 @@ public:
                     continue; // If it is not a prepared session, omit.
                 auto aes_key = this_conn->get_aes_gcm_key();
                 auto server_sid = this_conn->get_server_sid();
-                aes_decrypted_len = 0;
+                aes_dec_len = 0;
                 auto is_aes_ok = 
                     ((crypto_aead_aes256gcm_decrypt(
                         buffer.recv_aes_buffer.begin(), 
-                        (unsigned long long *)(&aes_decrypted_len),
+                        reinterpret_cast<unsigned long long *>(&aes_dec_len),
                         NULL,
                         pos + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES, 
                         SID_BYTES + sizeof(ok) + crypto_aead_aes256gcm_ABYTES,
                         NULL, 0,
                         client_aes_nonce.data(), aes_key.data()
-                    ) == 0) && (aes_decrypted_len == SID_BYTES + sizeof(ok)));
+                    ) == 0) && (aes_dec_len == SID_BYTES + sizeof(ok)));
 
-                buffer.recv_aes_bytes = aes_decrypted_len;
+                buffer.recv_aes_bytes = aes_dec_len;
                 auto is_msg_ok = 
                     ((std::memcmp(buffer.recv_aes_buffer.data(), 
                                 server_sid.data(), SID_BYTES) == 0 &&
@@ -1298,7 +1298,8 @@ public:
                     timestamp + ",[SYSTEM_BCAST]," + (*uname) + " signed out!";
                 //std::cout << bcast_msg << std::endl;
                 // Broadcasting to all active users.      
-                broadcasting((const uint8_t *)(bcast_msg.c_str()), 
+                broadcasting(
+                    reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
                     bcast_msg.size());
                 continue;
             }
@@ -1373,8 +1374,9 @@ public:
                         std::string bcast_msg = 
                             timestamp + ",[SYSTEM_BCAST]," + reg_info[1] + 
                             " signed up and signed in!";
-                        broadcasting((const uint8_t *)(bcast_msg.c_str()), 
-                                    bcast_msg.size());
+                        broadcasting(
+                            reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
+                            bcast_msg.size());
                         continue;
                     }
                     // Processing sign in process. signin_type = 0: uemail, signin_type = 1: uname;
@@ -1415,7 +1417,8 @@ public:
                     if (users.get_bind_cif(0, uemail, prev_cif)) {
                         timestamp = lc_utils::now_time_to_str();
                         simple_secure_send(0x10, prev_cif, 
-                            (const uint8_t *)s_signout, sizeof(s_signout));
+                            reinterpret_cast<const uint8_t *>(s_signout), 
+                            sizeof(s_signout));
                         clients.delete_ctx(prev_cif);
                         conns.delete_session(prev_cif);
                     }
@@ -1423,8 +1426,9 @@ public:
                     timestamp = lc_utils::now_time_to_str();
                     std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
                                             uname + " signed in!";
-                    broadcasting((const uint8_t *)(bcast_msg.c_str()), 
-                                bcast_msg.size());
+                    broadcasting(
+                        reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
+                        bcast_msg.size());
                     continue;
                 }
                 // stat = 2

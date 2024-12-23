@@ -647,7 +647,7 @@ public:
         auto sid = curr_s.get_server_sid();
 
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
-        size_t offset = 0, aes_encrypted_len = 0;
+        size_t offset = 0, aes_enc_len = 0;
 
         // Padding the first byte
         buff.send_buffer[0] = header;
@@ -680,13 +680,13 @@ public:
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
             buff.send_buffer.data() + offset, 
-            (unsigned long long *)&aes_encrypted_len,
-            (const uint8_t *)buff.send_aes_buffer.data(),
+            reinterpret_cast<unsigned long long *>(&aes_enc_len),
+            reinterpret_cast<const uint8_t *>(buff.send_aes_buffer.data()),
             buff.send_aes_bytes, 
             NULL, 0, NULL, 
             client_aes_nonce.data(), aes_key.data()
         );
-        buff.send_bytes = offset + aes_encrypted_len;
+        buff.send_bytes = offset + aes_enc_len;
         if (res != 0) 
             return -5;
         auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), 
@@ -762,7 +762,7 @@ public:
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
         size_t offset = 0;
-        unsigned long long unsign_len = 0, aes_decrypted_len = 0;
+        unsigned long long unsign_len = 0, aes_dec_len = 0;
         auto raw_beg = buff.recv_raw_buffer.data();
         auto aes_beg = buff.recv_aes_buffer.data();
         auto sid = s.get_server_sid();
@@ -816,7 +816,8 @@ public:
                         if (send_msg_body.size() > 0) {
                             mtx.lock();
                             simple_secure_send_stc(fd, 0x10, s, buff, 
-                                (const uint8_t *)send_msg_body.c_str(), 
+                                reinterpret_cast<const uint8_t *>
+                                    (send_msg_body.c_str()), 
                                 send_msg_body.size());
                             mtx.unlock();
                         }
@@ -856,8 +857,9 @@ public:
                     bytes - 1, server_pk.get_server_spk().data()) != 0)
                     continue;
                 offset += crypto_sign_BYTES;
-                std::string msg_str((const char *)(raw_beg + offset), 
-                                    bytes - offset);
+                std::string msg_str(
+                    reinterpret_cast<const char *>(raw_beg + offset), 
+                    bytes - offset);
                 msg_vec.push_back(msg_str);
                 is_msg_recved = true;
             }
@@ -885,12 +887,12 @@ public:
                 offset += crypto_aead_aes256gcm_NPUBBYTES;
                 auto res = 
                     (crypto_aead_aes256gcm_decrypt(
-                        aes_beg, &aes_decrypted_len, NULL,
+                        aes_beg, &aes_dec_len, NULL,
                         raw_beg + offset, bytes - offset,
                         NULL, 0,
                         aes_nonce.data(), s.get_aes256gcm_key().data()
                     ) == 0);
-                buff.recv_aes_bytes = aes_decrypted_len;
+                buff.recv_aes_bytes = aes_dec_len;
                 if (!res) 
                     continue;
                 // Reading aes buffer.
@@ -904,8 +906,8 @@ public:
                 if (sid != recved_sid || cif != recved_cif)
                     continue;
                 auto msg_beg = aes_beg + offset;
-                auto msg_len = aes_decrypted_len - offset;
-                std::string msg_body((char *)msg_beg, msg_len);
+                auto msg_len = aes_dec_len - offset;
+                std::string msg_body(reinterpret_cast<char *>(msg_beg), msg_len);
                 msg_vec.push_back(msg_body);
                 is_msg_recved = true;
                 if (msg_len == sizeof(s_signout) && 
@@ -1023,8 +1025,9 @@ public:
         
         // The standard format:
         // timestamp,sender_uname,utf8_msg_body
-        auto parsed_msg = lc_utils::split_buffer((uint8_t *)utf8_msg.data(), 
-                          utf8_msg.size(), ',', 3);
+        auto parsed_msg = lc_utils::split_buffer(
+            reinterpret_cast<const uint8_t *>(utf8_msg.data()), 
+            utf8_msg.size(), ',', 3);
         if (parsed_msg.size() < 3)
             return 3; // Not a valid message
         std::string timestmp = parsed_msg[0];
@@ -1167,7 +1170,7 @@ public:
         auto sid = curr_s.get_server_sid();
 
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
-        size_t offset = 0, aes_encrypted_len = 0;
+        size_t offset = 0, aes_enc_len = 0;
 
         // Padding the first byte
         buffer.send_buffer[0] = header;
@@ -1200,13 +1203,13 @@ public:
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
             buffer.send_buffer.data() + offset, 
-            (unsigned long long *)&aes_encrypted_len,
-            (const uint8_t *)buffer.send_aes_buffer.data(),
+            reinterpret_cast<unsigned long long *>(&aes_enc_len),
+            reinterpret_cast<const uint8_t *>(buffer.send_aes_buffer.data()),
             buffer.send_aes_bytes, 
             NULL, 0, NULL, 
             client_aes_nonce.data(), aes_key.data()
         );
-        buffer.send_bytes = offset + aes_encrypted_len;
+        buffer.send_bytes = offset + aes_enc_len;
         if (res != 0) 
             return -5;
         auto ret = simple_send(curr_s, buffer.send_buffer.data(), 
@@ -1227,7 +1230,7 @@ public:
         std::array<uint8_t, CIF_BYTES> cif_bytes;
         auto begin = buffer.recv_raw_buffer.begin();
         size_t offset = 0; // Omit first byte 0x10.
-        unsigned long long aes_decrypted_len = 0;
+        unsigned long long aes_dec_len = 0;
         auto header = buffer.recv_raw_buffer[0];
         if (header != 0x10) 
             return false;
@@ -1238,13 +1241,13 @@ public:
         offset += crypto_aead_aes256gcm_NPUBBYTES;
         auto ret = 
             (crypto_aead_aes256gcm_decrypt(
-                buffer.recv_aes_buffer.begin(), &aes_decrypted_len, NULL,
+                buffer.recv_aes_buffer.begin(), &aes_dec_len, NULL,
                 begin + offset, recved_raw_bytes - offset,
                 NULL, 0,
                 aes_nonce.data(), aes_key.data()
             ) == 0);
-        buffer.recv_aes_bytes = aes_decrypted_len;
-        if (aes_decrypted_len <= SID_BYTES + CIF_BYTES)
+        buffer.recv_aes_bytes = aes_dec_len;
+        if (aes_dec_len <= SID_BYTES + CIF_BYTES)
             return false;
         return ret;
     }
@@ -1336,8 +1339,8 @@ public:
         std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> recved_server_spk;
         std::array<uint8_t, crypto_box_PUBLICKEYBYTES> recved_server_cpk;
         struct sockaddr_in msg_addr;
-        size_t aes_encrypted_len = 0;
-        size_t aes_decrypted_len = 0;
+        size_t aes_enc_len = 0;
+        size_t aes_dec_len = 0;
         size_t offset = 0;
 
         while (true) {
@@ -1462,17 +1465,16 @@ public:
                     auto is_aes_ok = 
                         (crypto_aead_aes256gcm_decrypt(
                             buffer.recv_aes_buffer.begin(), 
-                            (unsigned long long *)(&aes_decrypted_len),
-                            NULL,
-                            beg + offset, 
+                            reinterpret_cast<unsigned long long *>(&aes_dec_len),
+                            NULL, beg + offset, 
                             SID_BYTES + CIF_BYTES + sizeof(ok) + 
                                 crypto_aead_aes256gcm_ABYTES,
                             NULL, 0,
                             server_aes_nonce.data(), aes_key.data()
                         ) == 0);
 
-                    buffer.recv_aes_bytes = aes_decrypted_len;
-                    auto is_msg_ok = ((aes_decrypted_len == SID_BYTES + 
+                    buffer.recv_aes_bytes = aes_dec_len;
+                    auto is_msg_ok = ((aes_dec_len == SID_BYTES + 
                         CIF_BYTES + sizeof(ok)) && 
                         (std::memcmp(buffer.recv_aes_buffer.begin() + 
                             SID_BYTES + CIF_BYTES, ok, sizeof(ok)) == 0));
@@ -1597,16 +1599,15 @@ public:
                     auto is_aes_ok = 
                         (crypto_aead_aes256gcm_decrypt(
                             buffer.recv_aes_buffer.begin(), 
-                            (unsigned long long *)(&aes_decrypted_len),
-                            NULL,
-                            beg + offset, 
+                            reinterpret_cast<unsigned long long *>(&aes_dec_len),
+                            NULL, beg + offset, 
                             SID_BYTES + CIF_BYTES + sizeof(ok) + 
                                 crypto_aead_aes256gcm_ABYTES,
                             NULL, 0,
                             server_aes_nonce.data(), 
                             session.get_aes256gcm_key().data()
                         ) == 0);
-                    buffer.recv_aes_bytes = aes_decrypted_len;
+                    buffer.recv_aes_bytes = aes_dec_len;
                     if (!is_aes_ok)
                         continue; // Invalid key, probably not from the previous server.
                     if (std::memcmp(buffer.recv_aes_buffer.begin() + 
