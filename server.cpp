@@ -1074,9 +1074,12 @@ public:
                       << ':' << ntohs(client_addr.sin_port) << '\t';
             std::cout << std::endl << std::hex << std::setw(2) 
                       << std::setfill('0');
-            for (size_t i = 0; i < bytes_recv; ++ i) 
+            for (size_t i = 0; i < 10; ++ i) 
                 std::cout << (int)buffer.recv_raw_buffer[i] << ' ';
+            if (bytes_recv > 10) 
+                std::cout << "...";
             std::cout << std::dec << bytes_recv << std::endl;
+
             
             auto beg = buffer.recv_raw_buffer.begin();
             size_t offset = 0;
