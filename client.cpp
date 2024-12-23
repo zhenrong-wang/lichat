@@ -944,21 +944,22 @@ public:
         std::string prefix(prefix_len, ' ');
         std::string suffix(suffix_len, ' ');
 
-        auto w_in = lc_utils::utf8_to_wstr(utf8_in);
-        auto w_len = lc_utils::get_wstr_print_len(w_in);
+        auto u_in = icu::UnicodeString::fromUTF8(utf8_in);
+        auto u_len = lc_utils::get_ustr_print_len(u_in);
         
-        auto is_single_line = [](const std::wstring& wstr, const size_t& len) {
-            if (lc_utils::get_wstr_print_len(wstr) > len) 
+        auto is_single_line = [](const icu::UnicodeString& ustr, const size_t& len) {
+            if (lc_utils::get_ustr_print_len(ustr) > len) 
                 return false;
-            for (auto wch : wstr) {
-                if (wch == '\r' || wch == '\n')
+            for (uint32_t i = 0; i < ustr.countChar32(); ) {
+                if (ustr.char32At(i) == '\r' || ustr.char32At(i) == '\n')
                     return false;
+                i = ustr.moveIndex32(i, 1);
             }
             return true;
         };
         // Handle single line input.
-        if (is_single_line(w_in, line_len)) {
-            std::string padding(line_len - w_len, ' ');
+        if (is_single_line(u_in, line_len)) {
+            std::string padding(line_len - u_len, ' ');
             if (left_align)
                 utf8_out = prefix + utf8_in + padding + suffix;
             else 
@@ -977,14 +978,15 @@ public:
         std::vector<struct split> splits;
         size_t len_tmp = 0;
         splits.push_back(split(0, false));
-        for (size_t i = 0; i < w_in.size(); ++ i) {
-            if (w_in[i] == '\n' || w_in[i] == '\r') {
+        for (int32_t i = 0; i < u_in.countChar32(); ) {
+            if (u_in.char32At(i) == '\n' || u_in.char32At(i) == '\r') {
                 splits.push_back(split(i + 1, false));
                 len_tmp = 0;
+                i = u_in.moveIndex32(i, 1);
                 continue;
             }
-            auto char_pw = (!iswprint(w_in[i])) ? 0 : 
-                            ((w_in[i] <= 0x7FF) ? 1 : 2);
+            auto char_pw = (!iswprint(u_in.char32At(i))) ? 0 : 
+                            ((u_in.char32At(i) <= 0x7FF) ? 1 : 2);
             if (len_tmp + char_pw > line_len) {
                 if (len_tmp + char_pw - line_len == char_pw)
                     splits.push_back(split(i, false));
@@ -995,23 +997,26 @@ public:
             else {
                 len_tmp += char_pw;
             }
+            i = u_in.moveIndex32(i, 1);
         }
         size_t idx = 0;
         while (idx < splits.size() - 1) {
             len_tmp = splits[idx + 1].pos - splits[idx].pos;
-            auto w_substr = w_in.substr(splits[idx].pos, len_tmp);
-            auto utf8_substr = lc_utils::wstr_to_utf8(w_substr);
+            auto u_substr = u_in.tempSubString(splits[idx].pos, len_tmp);
+            std::string utf8_substr;
+            u_substr.toUTF8String(utf8_substr);
             if (splits[idx + 1].pdn) 
                 utf8_out += (prefix + utf8_substr + " " + suffix);
             else 
                 utf8_out += (prefix + utf8_substr + suffix);
             ++ idx;
         }
-        auto w_substr_last = w_in.substr(splits[idx].pos);
-        auto w_substr_last_len = lc_utils::get_wstr_print_len(w_substr_last);
-        std::string padding(line_len - w_substr_last_len, ' ');
-        utf8_out += prefix + lc_utils::wstr_to_utf8(w_substr_last) + 
-                    padding + suffix;
+        auto u_substr_last = u_in.tempSubString(splits[idx].pos);
+        auto u_substr_last_len = lc_utils::get_ustr_print_len(u_substr_last);
+        std::string padding(line_len - u_substr_last_len, ' ');
+        std::string utf8_substr_last;
+        u_substr_last.toUTF8String(utf8_substr_last);
+        utf8_out += prefix + utf8_substr_last + padding + suffix;
         return 0;
     }
 
