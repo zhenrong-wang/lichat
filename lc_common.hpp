@@ -19,10 +19,10 @@
 #else
 #include <conio.h> // For Windows terminal password input
 #endif
-
 #include <arpa/inet.h>
 #include <chrono>
-#include <codecvt>
+#include <unicode/unistr.h>
+#include <unicode/ucnv.h>
 
 namespace lc_utils {
 
@@ -266,8 +266,18 @@ namespace lc_utils {
 
     // Convert a wide string to UTF-8
     static std::string wstr_to_utf8 (const std::wstring& wstr) {
-        std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-        return converter.to_bytes(wstr);
+        //std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+        //return converter.to_bytes(wstr);
+        icu::UnicodeString ustr;
+        if (sizeof(wchar_t) == 2)
+            ustr = icu::UnicodeString(
+                reinterpret_cast<const UChar *>(wstr.data(), wstr.size()));
+        else
+            ustr = icu::UnicodeString::fromUTF32(
+                reinterpret_cast<const UChar32 *>(wstr.data()), wstr.size());
+        std::string utf8_str;
+        ustr.toUTF8String(utf8_str);
+        return utf8_str;
     }
 
     // Get the real bytes of converted wide string (to UTF-8) 
@@ -275,24 +285,21 @@ namespace lc_utils {
         return wstr_to_utf8(wstr).size();
     }
 
-    // Convert a UTF-8 string to wide string
-    static std::wstring utf8_to_wstr (const std::string& utf8_str) {
-        std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-        return converter.from_bytes(utf8_str);
-    }
-
     // Calculate the actual characters of a UTF-8 string
-    size_t get_utf8_chars (const std::string& utf8_str) {
-        return utf8_to_wstr(utf8_str).size();
+    int32_t get_utf8_chars (const std::string& utf8_str) {
+        return icu::UnicodeString::fromUTF8(utf8_str).countChar32();
     }
 
-    size_t get_wstr_print_len (const std::wstring& wstr) {
+    size_t get_ustr_print_len (const icu::UnicodeString& ustr) {
         size_t ret = 0;
-        for (auto wch : wstr) {
+        auto chars = ustr.countChar32();
+        for (int32_t i = 0; i < chars; ) {
+            auto wch = ustr.char32At(i);
             if (wch <= 0x7FF)
                 ++ ret;
             else
                 ret += 2;
+            i = ustr.moveIndex32(i, 1);
         }
         return ret;
     }
