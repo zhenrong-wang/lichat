@@ -30,10 +30,11 @@ But the client (WIP) would work on different platforms.
 
 - Fork this repository or clone directly
 - Change directory to your local cloned dir
-- You will need a C++ compiler (e.g. Clang++ or g++), and pre-install the libsodium.
+- You will need a C++ compiler (e.g. Clang++ or g++).
+- Dependencies: `sodium` for security. The client code depends on `ncursesw` for TUI, `POSIX Thread` for threading, and `ICU` for UnicodeString processing. 
 - Build command: 
   - `g++ server.cpp -lsodium -o server` 
-  - `g++ client.cpp -lsodium -lncurses -lpthread -o client`
+  - `g++ client.cpp -lsodium -lncursesw -licuuc -lpthread -o client`
 - Run the build: `./server`. The port number would be displayed in your `STDOUT`
 - Run the build: `./client`. It would connect to localhost by default but you can also specify a domain name and a port.
 
