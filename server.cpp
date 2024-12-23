@@ -140,6 +140,12 @@ public:
         else 
             return false;
     }
+    bool is_inactive (time_t now) {
+        if (now - last_heartbeat > HEARTBEAT_TIMEOUT_SECS) 
+            return true;
+        else 
+            return false;
+    }
 };
 
 struct session_pool_stats {
@@ -987,11 +993,12 @@ public:
 
     // Check all the connections and delete any inactive connections and their
     // contexts. Update the user status.
-    void check_all_conns () {
+    size_t check_all_conns (time_t now) {
         auto& map = conns.get_session_map();
+        size_t erased = 0;
         uint64_t cif_curr = 0;
         for (auto it = map.begin(); it != map.end(); ) {
-            if (it->second.is_inactive()) {
+            if (it->second.is_inactive(now)) {
                 auto cif = it->first;
                 auto p_ctx = clients.get_ctx(cif);
                 if (p_ctx) {
@@ -1002,12 +1009,14 @@ public:
                 }
                 auto status = it->second.get_status();
                 it = map.erase(it);
+                ++ erased;
                 conns.update_stats_at_session_delete(status);
             }
             else {
                 ++ it;
             }
         }
+        return erased;
     }
 
     // Main processing method.
@@ -1034,10 +1043,12 @@ public:
         time_t check_t = lc_utils::now_time();
         while (true) {
             // Server checks all connections
-            if (lc_utils::now_time() - check_t >= SERVER_CONNS_CHECK_SECS) {
+            auto now = lc_utils::now_time();
+            if (now - check_t >= SERVER_CONNS_CHECK_SECS) {
                 std::cout << "Checking all connections ..." << std::endl;
-                check_all_conns();
-                check_t = lc_utils::now_time();
+                auto erased = check_all_conns(now);
+                check_t = now;
+                std::cout << "Erased " << erased << " inactive." << std::endl;
             }
             struct sockaddr_in client_addr;
             auto addr_len = sizeof(client_addr);
