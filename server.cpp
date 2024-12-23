@@ -1269,6 +1269,7 @@ public:
                 if (buffer.recv_raw_bytes == HEARTBEAT_BYTES) {
                     // All the checks done, update the addr.
                     ptr_session->set_src_addr(client_addr);
+                    ptr_session->set_last_heartbeat(lc_utils::now_time());
                     std::array<uint8_t, HEARTBEAT_BYTES> packet;
                     packet[0] = 0x1F;
                     if (crypto_sign(packet.data() + 1, &sign_len, 
