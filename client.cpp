@@ -1016,16 +1016,16 @@ public:
         // All lines would be left aligned.
         struct split {
             size_t pos;
-            bool pdn;
-            split (size_t p, bool flag) : pos(p), pdn(flag) {}
+            int pdn;    // 0: nothing, 1: suffix, 2: 1 byte + suffix
+            split (size_t p, int flag) : pos(p), pdn(flag) {}
         };
         utf8_out.clear();
         std::vector<struct split> splits;
         size_t len_tmp = 0;
-        splits.push_back(split(0, false));
+        splits.push_back(split(0, 0));
         for (int32_t i = 0; i < ustr.length(); ) {
             if (ustr.char32At(i) == '\n' || ustr.char32At(i) == '\r') {
-                splits.push_back(split(i + 1, false));
+                splits.push_back(split(i + 1, 0));
                 len_tmp = 0;
                 i = ustr.moveIndex32(i, 1);
                 continue;
@@ -1034,9 +1034,9 @@ public:
                             ((ustr.char32At(i) <= (UChar32)0x7FF) ? 1 : 2);
             if (len_tmp + char_pw > line_len) {
                 if (len_tmp + char_pw - line_len == char_pw)
-                    splits.push_back(split(i, false));
+                    splits.push_back(split(i, 1));
                 else 
-                    splits.push_back(split(i, true));
+                    splits.push_back(split(i, 2));
                 len_tmp = char_pw;
             }
             else {
@@ -1050,10 +1050,12 @@ public:
             auto u_substr = ustr.tempSubString(splits[idx].pos, len_tmp);
             std::string utf8_substr;
             u_substr.toUTF8String(utf8_substr);
-            if (splits[idx + 1].pdn) 
-                utf8_out += (prefix + utf8_substr + " " + suffix);
-            else 
+            if (splits[idx + 1].pdn == 0) 
+                utf8_out += (prefix + utf8_substr);
+            else if (splits[idx + 1].pdn == 1) 
                 utf8_out += (prefix + utf8_substr + suffix);
+            else
+                utf8_out += (prefix + utf8_substr + " " + suffix);
             ++ idx;
         }
         auto u_substr_last = ustr.tempSubString(splits[idx].pos, 
