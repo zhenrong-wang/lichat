@@ -1077,8 +1077,8 @@ public:
             for (size_t i = 0; i < 10; ++ i) 
                 std::cout << (int)buffer.recv_raw_buffer[i] << ' ';
             if (bytes_recv > 10) 
-                std::cout << "...";
-            std::cout << std::dec << bytes_recv << std::endl;
+                std::cout << "... ";
+            std::cout << std::dec << bytes_recv << " bytes." << std::endl;
 
             
             auto beg = buffer.recv_raw_buffer.begin();
