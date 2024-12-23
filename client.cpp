@@ -25,6 +25,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <mutex>
+#include <unicode/unistr.h>
+#include <unicode/ucnv.h>
 
 constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
@@ -81,6 +83,49 @@ enum winmgr_errors {
     W_COLOR_NOT_SUPPORTED,
     W_WINDOW_SIZE_INVALID,
     W_WINDOW_CREATION_FAILED,
+};
+
+class lc_strings {
+public:
+// Convert a wide string to UTF-8
+    static std::string wstr_to_utf8 (const std::wstring& wstr) {
+        //std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+        //return converter.to_bytes(wstr);
+        icu::UnicodeString ustr;
+        if (sizeof(wchar_t) == 2)
+            ustr = icu::UnicodeString(
+                reinterpret_cast<const UChar *>(wstr.data(), wstr.size()));
+        else
+            ustr = icu::UnicodeString::fromUTF32(
+                reinterpret_cast<const UChar32 *>(wstr.data()), wstr.size());
+        std::string utf8_str;
+        ustr.toUTF8String(utf8_str);
+        return utf8_str;
+    }
+
+    // Get the real bytes of converted wide string (to UTF-8) 
+    static size_t get_wstr_utf8_bytes (const std::wstring& wstr) {
+        return wstr_to_utf8(wstr).size();
+    }
+
+    // Calculate the actual characters of a UTF-8 string
+    static int32_t get_utf8_chars (const std::string& utf8_str) {
+        return icu::UnicodeString::fromUTF8(utf8_str).countChar32();
+    }
+
+    static size_t get_ustr_print_len (const icu::UnicodeString& ustr) {
+        size_t ret = 0;
+        auto ustr_len = ustr.length();
+        for (int32_t i = 0; i < ustr_len; ) {
+            auto wch = ustr.char32At(i);
+            if (wch <= static_cast<UChar32>(0x07FF))
+                ++ ret;
+            else
+                ret += 2;
+            i = ustr.moveIndex32(i, 1);
+        }
+        return ret;
+    }
 };
 
 struct input_buffer {
@@ -268,7 +313,7 @@ public:
         wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
         mvwprintw(bottom_win, start_y, start_x, "%s [chars: %d]", 
-                  lc_utils::wstr_to_utf8(input.wstr).c_str(), 
+                  lc_strings::wstr_to_utf8(input.wstr).c_str(), 
                   input.wstr.size());
         wrefresh(bottom_win);
         return true;
@@ -944,13 +989,13 @@ public:
         std::string prefix(prefix_len, ' ');
         std::string suffix(suffix_len, ' ');
 
-        auto u_in = icu::UnicodeString::fromUTF8(utf8_in);
-        auto u_len = lc_utils::get_ustr_print_len(u_in);
-        
+        auto ustr = icu::UnicodeString::fromUTF8(utf8_in);
+        auto ustr_plen = lc_strings::get_ustr_print_len(ustr);
+
         auto is_single_line = [](const icu::UnicodeString& ustr, const size_t& len) {
-            if (lc_utils::get_ustr_print_len(ustr) > len) 
+            if (lc_strings::get_ustr_print_len(ustr) > len) 
                 return false;
-            for (uint32_t i = 0; i < ustr.countChar32(); ) {
+            for (int32_t i = 0; i < ustr.length(); ) {
                 if (ustr.char32At(i) == '\r' || ustr.char32At(i) == '\n')
                     return false;
                 i = ustr.moveIndex32(i, 1);
@@ -958,8 +1003,8 @@ public:
             return true;
         };
         // Handle single line input.
-        if (is_single_line(u_in, line_len)) {
-            std::string padding(line_len - u_len, ' ');
+        if (is_single_line(ustr, line_len)) {
+            std::string padding(line_len - ustr_plen, ' ');
             if (left_align)
                 utf8_out = prefix + utf8_in + padding + suffix;
             else 
@@ -978,15 +1023,15 @@ public:
         std::vector<struct split> splits;
         size_t len_tmp = 0;
         splits.push_back(split(0, false));
-        for (int32_t i = 0; i < u_in.countChar32(); ) {
-            if (u_in.char32At(i) == '\n' || u_in.char32At(i) == '\r') {
+        for (int32_t i = 0; i < ustr.length(); ) {
+            if (ustr.char32At(i) == '\n' || ustr.char32At(i) == '\r') {
                 splits.push_back(split(i + 1, false));
                 len_tmp = 0;
-                i = u_in.moveIndex32(i, 1);
+                i = ustr.moveIndex32(i, 1);
                 continue;
             }
-            auto char_pw = (!iswprint(u_in.char32At(i))) ? 0 : 
-                            ((u_in.char32At(i) <= 0x7FF) ? 1 : 2);
+            auto char_pw = (!iswprint(ustr.char32At(i))) ? 0 : 
+                            ((ustr.char32At(i) <= (UChar32)0x7FF) ? 1 : 2);
             if (len_tmp + char_pw > line_len) {
                 if (len_tmp + char_pw - line_len == char_pw)
                     splits.push_back(split(i, false));
@@ -997,12 +1042,12 @@ public:
             else {
                 len_tmp += char_pw;
             }
-            i = u_in.moveIndex32(i, 1);
+            i = ustr.moveIndex32(i, 1);
         }
         size_t idx = 0;
         while (idx < splits.size() - 1) {
             len_tmp = splits[idx + 1].pos - splits[idx].pos;
-            auto u_substr = u_in.tempSubString(splits[idx].pos, len_tmp);
+            auto u_substr = ustr.tempSubString(splits[idx].pos, len_tmp);
             std::string utf8_substr;
             u_substr.toUTF8String(utf8_substr);
             if (splits[idx + 1].pdn) 
@@ -1011,9 +1056,10 @@ public:
                 utf8_out += (prefix + utf8_substr + suffix);
             ++ idx;
         }
-        auto u_substr_last = u_in.tempSubString(splits[idx].pos);
-        auto u_substr_last_len = lc_utils::get_ustr_print_len(u_substr_last);
-        std::string padding(line_len - u_substr_last_len, ' ');
+        auto u_substr_last = ustr.tempSubString(splits[idx].pos, 
+                                  ustr.length() - splits[idx].pos);
+        auto u_substr_plen = lc_strings::get_ustr_print_len(u_substr_last);
+        std::string padding(line_len - u_substr_plen, ' ');
         std::string utf8_substr_last;
         u_substr_last.toUTF8String(utf8_substr_last);
         utf8_out += prefix + utf8_substr_last + padding + suffix;
@@ -1771,7 +1817,7 @@ public:
         // q!: normal exit
         while (!heartbeat_timeout && !auto_signout) {
             int res = wget_wch(winmgr.get_bottom_win(), &wch);
-            input.bytes = lc_utils::get_wstr_utf8_bytes(input.wstr);
+            input.bytes = lc_strings::get_wstr_utf8_bytes(input.wstr);
             auto input_done = false;
             if (res != OK) { // key input
                 if (wch == KEY_BACKSPACE) {
@@ -1798,7 +1844,7 @@ public:
                     break;
                 }
                 mtx.lock();
-                send_msg_body = lc_utils::wstr_to_utf8(input.wstr);
+                send_msg_body = lc_strings::wstr_to_utf8(input.wstr);
                 mtx.unlock();
                 send_msg_req.store(true);
                 input.wstr = L"";
