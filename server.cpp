@@ -371,11 +371,8 @@ public:
         std::vector<char> vec(user_db_header.size());
         file_in.read(vec.data(), user_db_header.size());
         std::streamsize bytes_read = file_in.gcount();
-        if (bytes_read != user_db_header.size()) {
-            std::cout << bytes_read << "  " << user_db_header.size();
+        if (bytes_read != user_db_header.size()) 
             return 3;
-        }
-               // The header is incorrect.
         std::string header_str(vec.begin(), vec.begin() + vec.size());
         if (header_str != user_db_header)
             return 5;   // The header is incorrect.
