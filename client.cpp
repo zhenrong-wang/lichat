@@ -181,7 +181,9 @@ public:
         initscr();
         cbreak();
         noecho();
-        mousemask(ALL_MOUSE_EVENTS, NULL);
+
+        // Mouse support is in progress.
+        //mousemask(ALL_MOUSE_EVENTS, NULL);
 
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
