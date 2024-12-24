@@ -32,7 +32,8 @@ constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
-const std::string prompt = "Enter your input: ";
+const std::string prompt = "Input: ";
+const std::string send_prompt = "([SHIFT][END] to send)";
 const std::string top_bar_msg = 
     "LiChat: Free Software (LIC: MIT) for Free Speech.";
 
@@ -162,6 +163,7 @@ class window_mgr {
     WINDOW *bottom_win; // 2
     WINDOW *side_win;   // 3
     std::array<struct rect, 4> rects;
+    WINDOW *last_clicked_win;
     int status;     // 0 - not initialized
                     // 1 - created
                     // 2 - set, ready for use, active
@@ -169,7 +171,7 @@ class window_mgr {
 
 public: 
     window_mgr () : top_bar(nullptr), top_win(nullptr), bottom_win(nullptr),
-        side_win(nullptr), status(0) {};
+        side_win(nullptr), last_clicked_win(nullptr), status(0) {};
 
     int init () {
         if (status != 0) 
@@ -336,9 +338,9 @@ public:
         int start_y = prompt.size() / w, start_x = prompt.size() % w;
         wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
-        mvwprintw(bottom_win, start_y, start_x, "%s [chars: %d]", 
+        mvwprintw(bottom_win, start_y, start_x, "%s [%d]  %s", 
                   lc_strings::wstr_to_utf8(input.wstr).c_str(), 
-                  input.wstr.size());
+                  input.wstr.size(), send_prompt.c_str());
         wrefresh(bottom_win);
         return true;
     }
@@ -348,17 +350,32 @@ public:
             return true;
         return false; 
     }
+    
+    static bool is_valid_mouse_click (const MEVENT& ev) {
+        if (ev.bstate == BUTTON1_CLICKED || 
+            ev.bstate == BUTTON1_DOUBLE_CLICKED ||
+            ev.bstate == BUTTON1_PRESSED || 
+            ev.bstate == BUTTON1_TRIPLE_CLICKED)
+            return true;
+        return false;
+    }
 
-    WINDOW *get_selected_win (const point& p) {
-        if (is_point_in_rect(p, rects[0]))
-            return top_bar;
-        if (is_point_in_rect(p, rects[1]))
-            return top_win;
-        if (is_point_in_rect(p, rects[2]))
-            return bottom_win;
-        if (is_point_in_rect(p, rects[3]))
-            return side_win;
-        return nullptr;
+    void switch_clicked_win (const MEVENT& ev) {
+        if (!is_valid_mouse_click(ev)) 
+            return;
+        struct point clicked(ev.y, ev.x);
+        if (is_point_in_rect(clicked, rects[0]))
+            last_clicked_win = top_bar;
+        if (is_point_in_rect(clicked, rects[1]))
+            last_clicked_win = top_win;
+        if (is_point_in_rect(clicked, rects[2]))
+            last_clicked_win = bottom_win;
+        if (is_point_in_rect(clicked, rects[3]))
+            last_clicked_win = side_win;
+    }
+
+    WINDOW *get_clicked_win () {
+        return last_clicked_win;
     }
 };
 
@@ -1874,9 +1891,23 @@ public:
                 if (wch == KEY_MOUSE) {
                     if (getmouse(&ev) != OK)
                         continue;
-                    
+                    if (!winmgr.is_valid_mouse_click(ev))
+                        continue;
+                    winmgr.switch_clicked_win(ev);
+                    continue;
                 }
-                if (wch != KEY_ENTER) 
+                // WIP: Scroll window is in progress.
+                /*if (wch == KEY_UP) {
+                    wscrl(winmgr.get_clicked_win(), 1);
+                    wrefresh(winmgr.get_clicked_win());
+                    continue;
+                }
+                if (wch == KEY_DOWN) {
+                    wscrl(winmgr.get_clicked_win(), -1);
+                    wrefresh(winmgr.get_clicked_win());
+                    continue;
+                }*/
+                if (wch != KEY_SEND) 
                     continue;
                 else 
                     input_done = true;
