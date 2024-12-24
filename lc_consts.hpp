@@ -6,11 +6,11 @@
 #include "sodium.h"
 
 // Client Window related
-constexpr size_t WIN_HEIGHT_MIN = 16;
-constexpr size_t WIN_WIDTH_MIN = 52;
-constexpr size_t SIDE_WIN_WIDTH = 16;
-constexpr size_t BOTTOM_HEIGHT = 7;
-constexpr size_t TOP_BAR_HEIGHT = 1;
+constexpr int WIN_HEIGHT_MIN = 16;
+constexpr int WIN_WIDTH_MIN = 52;
+constexpr int SIDE_WIN_WIDTH = 16;
+constexpr int BOTTOM_HEIGHT = 7;
+constexpr int TOP_BAR_HEIGHT = 1;
 
 // Critical bytes
 constexpr uint8_t CID_BYTES = 8;
@@ -67,6 +67,9 @@ constexpr uint8_t client_df_msgerr[ERR_CODE_BYTES] =
 // The default key dir
 constexpr char default_key_dir[] = "./";
 
+// The default user db path
+constexpr char default_user_db_path[] = "./lichat_signed_users.db";
+
 // Heartbeating related.
 constexpr size_t HEARTBEAT_INTERVAL_SECS = 120;
 constexpr size_t HEARTBEAT_TIMEOUT_SECS = 180;
@@ -84,6 +87,9 @@ constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
 
 // Server receive wait
 constexpr size_t SERVER_RECV_WAIT_SECS = 10;
+
+// Server user_db header
+const std::string user_db_header = "UEMAIL,UNAME,PASSHASH\n";
 
 // Some useful strings.
 constexpr char fatal_error[] = "Server internal fatal error.\n";
