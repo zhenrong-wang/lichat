@@ -140,15 +140,28 @@ struct input_buffer {
 struct input_wbuff {
     std::wstring wstr;
     size_t bytes;
-
     input_wbuff () : bytes(0) {};
 };
 
+struct point {
+    int y;
+    int x;
+    point () : y(0), x(0) {}
+    point (int y_in, int x_in) : y(y_in), x(x_in) {}
+};
+
+struct rect {
+    struct point p0;
+    struct point p1;
+    rect () : p0(point()), p1(point()) {}
+};
+
 class window_mgr {
-    WINDOW *top_bar;
-    WINDOW *top_win;
-    WINDOW *bottom_win;
-    WINDOW *side_win;
+    WINDOW *top_bar;    // 0
+    WINDOW *top_win;    // 1
+    WINDOW *bottom_win; // 2
+    WINDOW *side_win;   // 3
+    std::array<struct rect, 4> rects;
     int status;     // 0 - not initialized
                     // 1 - created
                     // 2 - set, ready for use, active
@@ -166,6 +179,8 @@ public:
         initscr();
         cbreak();
         noecho();
+        mousemask(ALL_MOUSE_EVENTS, NULL);
+
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
         if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
@@ -177,8 +192,8 @@ public:
                          width - SIDE_WIN_WIDTH - 3, TOP_BAR_HEIGHT + 2, 1);
         bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
                             height - BOTTOM_HEIGHT - 1, 1);
-        side_win = newwin(height - 2, SIDE_WIN_WIDTH, TOP_BAR_HEIGHT + 2, 
-                          width - SIDE_WIN_WIDTH - 1);
+        side_win = newwin(height - TOP_BAR_HEIGHT - 3, SIDE_WIN_WIDTH, 
+                          TOP_BAR_HEIGHT + 2, width - SIDE_WIN_WIDTH - 1);
         if (!top_bar || !top_win || !bottom_win || !side_win) {
             if (top_bar) delwin(top_bar);
             if (top_win) delwin(top_win);
@@ -187,6 +202,15 @@ public:
             endwin();
             return W_WINDOW_CREATION_FAILED;
         }
+        
+        rects[0].p0 = {1, 1};
+        rects[0].p1 = {2, width - 1};
+        rects[1].p0 = {TOP_BAR_HEIGHT + 2, 1};
+        rects[1].p1 = {height - BOTTOM_HEIGHT - 2, width - SIDE_WIN_WIDTH - 2};
+        rects[2].p0 = {height - BOTTOM_HEIGHT - 1, 1};
+        rects[2].p1 = {height - 1, width - SIDE_WIN_WIDTH - 2};
+        rects[3].p0 = {TOP_BAR_HEIGHT + 2, width - SIDE_WIN_WIDTH - 1};
+        rects[3].p1 = {height - 1, width - 1};
         status = 1;
         return W_NORMAL_RETURN;
     }
@@ -317,6 +341,24 @@ public:
                   input.wstr.size());
         wrefresh(bottom_win);
         return true;
+    }
+
+    static bool is_point_in_rect (const point& p, const rect& r) {
+        if (p.y > r.p0.y && p.y < r.p1.y && p.x > r.p0.x && p.x < r.p1.x)
+            return true;
+        return false; 
+    }
+
+    WINDOW *get_selected_win (const point& p) {
+        if (is_point_in_rect(p, rects[0]))
+            return top_bar;
+        if (is_point_in_rect(p, rects[1]))
+            return top_win;
+        if (is_point_in_rect(p, rects[2]))
+            return bottom_win;
+        if (is_point_in_rect(p, rects[3]))
+            return side_win;
+        return nullptr;
     }
 };
 
@@ -1813,6 +1855,7 @@ public:
         std::thread heartbeat(thread_heartbeat);
 
         wint_t wch = 0;
+        MEVENT ev;
 
         // heartbeat_timeout: timeout exit
         // auto_signout: signed in on another client.
@@ -1827,6 +1870,11 @@ public:
                         input.wstr.pop_back();
                     winmgr.refresh_input(prompt, input);
                     continue;
+                }
+                if (wch == KEY_MOUSE) {
+                    if (getmouse(&ev) != OK)
+                        continue;
+                    
                 }
                 if (wch != KEY_ENTER) 
                     continue;

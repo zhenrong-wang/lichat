@@ -31,6 +31,7 @@
 enum SERVER_ERRORS {
     NORMAL_RETURN = 0,
     KEYMGR_FAILED,
+    USERDB_PRECHECK_FAILED,
     SOCK_FD_INVALID,
     SOCK_BIND_FAILED,
     SET_TIMEOUT_FAILED,
@@ -324,11 +325,8 @@ public:
 // purposes.
 struct user_item {
     std::string unique_email;   // Original unique email address provided by user, the main key
-    std::string unique_id;      // hex_str(sha256(unique_email))
-
     std::string unique_name;    // User self specified id. e.g.
     std::array<char, crypto_pwhash_STRBYTES> pass_hash;      // Hashed password
-
     uint8_t user_status;        // Currently, 0 - not in, 1 - signed in.
     uint64_t bind_cif;
 };
@@ -337,17 +335,136 @@ struct user_item {
 // The user storage is in memory, no persistence. Just for demonstration.
 // Please consider using a database if you'd like to go further.
 class user_mgr {
+    std::string db_file_path;
     // key: unique_email
     // value: user_item
     std::unordered_map<std::string, struct user_item> user_db;
 
-    // key: unique_id
+    // key: unique_unames
     // value: unique_email
     std::unordered_map<std::string, std::string> uname_uemail;
     std::string user_list_fmt;
 
 public:
     user_mgr () {}
+
+    user_mgr (const std::string& path) : db_file_path(path) {}
+
+    // Return 0: db_file_path is good to read/write
+    // Return 1 or 3: db_file_path is not good to read/write
+    int precheck_user_db () {
+        if (db_file_path.empty())
+            db_file_path = default_user_db_path;
+        std::ifstream file_in(db_file_path, 
+                              std::ios::in | std::ios::binary);
+        if (!file_in.is_open()) {
+            // Create a file.
+            std::ofstream file_out(db_file_path, std::ios::binary);
+            if (!file_out.is_open())
+                return 1;  // Failed to create a db file.
+            // Write the headers into it.
+            file_out.write(user_db_header.data(), user_db_header.size());
+            file_out.close();
+            return 0;
+        }
+        // If the file is good to open, check the format.
+        std::vector<char> vec(user_db_header.size());
+        file_in.read(vec.data(), user_db_header.size());
+        std::streamsize bytes_read = file_in.gcount();
+        if (bytes_read != user_db_header.size()) {
+            std::cout << bytes_read << "  " << user_db_header.size();
+            return 3;
+        }
+               // The header is incorrect.
+        std::string header_str(vec.begin(), vec.begin() + vec.size());
+        if (header_str != user_db_header)
+            return 5;   // The header is incorrect.
+        file_in.close();
+        return 0;   // The file is good to go.
+    }
+
+    int preload_user_db (size_t& loaded) {
+        if (user_db.size() > 0)
+            return 1;   // This operation is only valid at the beginning of the running. 
+
+        if (precheck_user_db() != 0)
+            return 3;   // Failed to precheck the db file.
+
+        std::ifstream file_in(db_file_path, 
+                              std::ios::in | std::ios::binary);
+        if (!file_in.is_open())
+            return 5;   // File I/O Error.
+        std::streampos skip = user_db_header.size();
+        file_in.seekg(skip, std::ios::beg);
+        if (!file_in) 
+            return 7;   // Not a valid file format.
+        bool fread_error = false;
+        size_t load_items = 0;
+        while (true) {
+            uint8_t uemail_bytes;
+            uint8_t uname_bytes;
+            std::array<char, crypto_pwhash_STRBYTES> passhash_read;
+            file_in.read(reinterpret_cast<char *>(&uemail_bytes), 1);
+            if (file_in.gcount() != 1) {
+                if (file_in.eof())
+                    break;
+                else {
+                    fread_error = true;
+                    break;
+                }
+            }
+            // Uemail length is 4~256, but uint8_t is 0~255, so we need to
+            // minus 1 when write it, and plus 1 when read it.
+            size_t uemail_read_bytes = static_cast<size_t>(uemail_bytes) + 1;
+            std::vector<char> uemail_read(uemail_read_bytes);
+            file_in.read(uemail_read.data(), uemail_read.size());
+            if (file_in.gcount() != uemail_read_bytes) {
+                fread_error = true;
+                break;
+            }
+            // Uname length is the read bytes, no offset.
+            file_in.read(reinterpret_cast<char *>(&uname_bytes), 1);
+            if (file_in.gcount() != 1) {
+                fread_error = true;
+                break;
+            }
+            std::vector<char> uname_read(uname_bytes);
+            file_in.read(uname_read.data(), uname_read.size());
+            if (file_in.gcount() != uname_bytes) {
+                fread_error = true;
+                break;
+            }
+            file_in.read(passhash_read.data(), passhash_read.size());
+            if (file_in.gcount() != passhash_read.size()) {
+                fread_error = true;
+                break;
+            }
+            std::string uemail_str(uemail_read.begin(), 
+                                   uemail_read.begin() + uemail_read.size());
+            std::string uname_str(uname_read.begin(),
+                                  uname_read.begin() + uname_read.size());
+            if (lc_utils::email_fmt_check(uemail_str) != 0)
+                continue;
+            if (lc_utils::user_name_fmt_check(uname_str) != 0)
+                continue;
+            if (user_db.find(uemail_str) != user_db.end())
+                continue;
+            if (uname_uemail.find(uname_str) != uname_uemail.end())
+                continue;
+            struct user_item new_user;
+            new_user.unique_email = uemail_str;
+            new_user.unique_name = uname_str;
+            new_user.pass_hash = passhash_read;
+            user_db.insert({uemail_str, new_user});
+            uname_uemail.insert({uname_str, uemail_str});
+            ++ load_items;
+        }
+        file_in.close();
+        loaded = load_items;
+        if (fread_error)
+            return 9;
+        return 0;
+    }
 
     bool is_email_registered (const std::string& email) {
         return (user_db.find(email) != user_db.end());
@@ -484,13 +601,34 @@ public:
         }
         struct user_item new_user;
         new_user.unique_email = uemail;
-        new_user.unique_id = email_to_uid(uemail);
         new_user.unique_name = uname;
         new_user.pass_hash = hashed_pass;
         user_db.insert({uemail, new_user});
         uname_uemail.insert({uname, uemail});
         user_list_fmt += (uname + " (" + uemail + ") " + "\n");
-        std::cout << user_list_fmt << std::endl;
+        std::ofstream file_out(db_file_path, std::ios::binary | std::ios::app);
+        if (!file_out.is_open()) {
+            err = 13;
+            return false;
+        }
+        size_t bytes_to_write = 1 + uemail.size() + 1 + uname.size() + 
+                                hashed_pass.size();
+        size_t offset = 0;
+        std::vector<uint8_t> block(bytes_to_write);
+        block[0] = static_cast<uint8_t>(uemail.size() - 1);
+        ++ offset;
+        std::copy(uemail.begin(), uemail.end(), block.begin() + offset);
+        offset += uemail.size();
+        block[offset] = static_cast<uint8_t>(uname.size());
+        ++ offset;       
+        std::copy(uname.begin(), uname.end(), block.begin() + offset);
+        offset += uname.size();
+        std::copy(hashed_pass.begin(), hashed_pass.end(), block.begin() + offset);
+        file_out.write(reinterpret_cast<char *>(block.data()), block.size());
+        if (file_out.fail()) {
+            err = 13;
+            return false;
+        }
         return true;
     }
 
@@ -625,7 +763,7 @@ public:
         key_dir = default_key_dir;
         key_mgr = key_mgr_25519(key_dir, "server_");
         buffer = msg_buffer();
-        users = user_mgr();
+        users = user_mgr(default_user_db_path);
         conns = session_pool();
         clients = ctx_pool();
         last_error = 0;
@@ -661,6 +799,10 @@ public:
         if (key_mgr.key_mgr_init() != 0) {
             std::cout << "Key manager not activated." << std::endl;
             return close_server(KEYMGR_FAILED);
+        }
+        if (users.precheck_user_db() != 0) {
+            std::cout << "User database precheck failed. " << users.precheck_user_db() << std::endl;
+            return close_server(USERDB_PRECHECK_FAILED);
         }
         server_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (server_fd == -1)
@@ -1029,6 +1171,9 @@ public:
             std::cout << "Server not started." << std::endl;
             return close_server(SOCK_FD_INVALID);
         }
+        size_t user_preloaded = 0;
+        users.preload_user_db(user_preloaded);
+        std::cout << "Preloaded " << user_preloaded << " users." << std::endl;
         struct timeval tv;
         tv.tv_sec = SERVER_RECV_WAIT_SECS;
         tv.tv_usec = 0;
