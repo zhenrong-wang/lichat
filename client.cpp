@@ -25,8 +25,10 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <mutex>
+
 #include <unicode/unistr.h>
 #include <unicode/ucnv.h>
+#include <unicode/ustring.h>
 
 constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
@@ -104,6 +106,31 @@ public:
         return utf8_str;
     }
 
+    static std::wstring utf8_to_wstr (const std::string& utf8_str) {
+        icu::UnicodeString ustr = icu::UnicodeString::fromUTF8(utf8_str);
+        std::wstring wstr;
+        int32_t required_size = 0;
+        UErrorCode uerr = U_ZERO_ERROR;
+        if (sizeof(wchar_t) == 2) {
+            u_strToWCS(nullptr, 0, &required_size, ustr.getBuffer(), 
+                       ustr.length(), &uerr);
+            if (U_FAILURE(uerr))
+                return L"";
+            wstr.resize(required_size);
+            u_strToWCS(&wstr[0], wstr.size(), nullptr, ustr.getBuffer(), 
+                       ustr.length(), &uerr);
+            if (U_FAILURE(uerr))
+                return L"";
+            return wstr;
+        }
+        else {
+            int32_t capacity = ustr.countChar32();
+            wstr.resize(capacity);
+            ustr.toUTF32((UChar32 *)(wstr.data()), capacity, uerr);
+            return wstr;
+        }
+    }
+
     // Get the real bytes of converted wide string (to UTF-8) 
     static size_t get_wstr_utf8_bytes (const std::wstring& wstr) {
         return wstr_to_utf8(wstr).size();
@@ -163,7 +190,7 @@ class window_mgr {
     WINDOW *bottom_win; // 2
     WINDOW *side_win;   // 3
     std::array<struct rect, 4> rects;
-    WINDOW *last_clicked_win;
+    WINDOW *focused_win;
     int status;     // 0 - not initialized
                     // 1 - created
                     // 2 - set, ready for use, active
@@ -171,7 +198,7 @@ class window_mgr {
 
 public: 
     window_mgr () : top_bar(nullptr), top_win(nullptr), bottom_win(nullptr),
-        side_win(nullptr), last_clicked_win(nullptr), status(0) {};
+        side_win(nullptr), focused_win(nullptr), status(0) {};
 
     int init () {
         if (status != 0) 
@@ -181,9 +208,6 @@ public:
         initscr();
         cbreak();
         noecho();
-
-        // Mouse support is in progress.
-        //mousemask(ALL_MOUSE_EVENTS, NULL);
 
         int height = 0, width = 0;
         getmaxyx(stdscr, height, width);
@@ -347,37 +371,37 @@ public:
         return true;
     }
 
-    static bool is_point_in_rect (const point& p, const rect& r) {
-        if (p.y > r.p0.y && p.y < r.p1.y && p.x > r.p0.x && p.x < r.p1.x)
-            return true;
-        return false; 
-    }
-    
-    static bool is_valid_mouse_click (const MEVENT& ev) {
-        if (ev.bstate == BUTTON1_CLICKED || 
-            ev.bstate == BUTTON1_DOUBLE_CLICKED ||
-            ev.bstate == BUTTON1_PRESSED || 
-            ev.bstate == BUTTON1_TRIPLE_CLICKED)
-            return true;
-        return false;
+    void switch_focused_win () {
+        std::string win_name;
+        if (focused_win == nullptr) {
+            focused_win = top_bar;
+            win_name = "  (focused: top_bar)";
+        } 
+        else if (focused_win == top_bar) {
+            focused_win = top_win;
+            win_name = "  (focused: msg_win)";
+        } 
+        else if (focused_win == top_win) {
+            focused_win = bottom_win;
+            win_name = "  (focused: input_win)";
+        }
+        else if (focused_win == bottom_win) {
+            focused_win = side_win;
+            win_name = "  (focused: side_win)";
+        }  
+        else {
+            focused_win = nullptr;
+            win_name = "  (focused: none)";
+        }
+        int top_bar_w = getmaxx(top_bar);
+        std::string blank(top_bar_w, ' ');
+        mvwprintw(top_bar, 0, 0, blank.c_str());
+        mvwprintw(top_bar, 0, 0, "%s%s", top_bar_msg.c_str(), win_name.c_str());
+        wrefresh(top_bar);
     }
 
-    void switch_clicked_win (const MEVENT& ev) {
-        if (!is_valid_mouse_click(ev)) 
-            return;
-        struct point clicked(ev.y, ev.x);
-        if (is_point_in_rect(clicked, rects[0]))
-            last_clicked_win = top_bar;
-        if (is_point_in_rect(clicked, rects[1]))
-            last_clicked_win = top_win;
-        if (is_point_in_rect(clicked, rects[2]))
-            last_clicked_win = bottom_win;
-        if (is_point_in_rect(clicked, rects[3]))
-            last_clicked_win = side_win;
-    }
-
-    WINDOW *get_clicked_win () {
-        return last_clicked_win;
+    WINDOW *get_focused_win () {
+        return focused_win;
     }
 };
 
@@ -1890,12 +1914,8 @@ public:
                     winmgr.refresh_input(prompt, input);
                     continue;
                 }
-                if (wch == KEY_MOUSE) {
-                    if (getmouse(&ev) != OK)
-                        continue;
-                    if (!winmgr.is_valid_mouse_click(ev))
-                        continue;
-                    winmgr.switch_clicked_win(ev);
+                if (wch == KEY_SHOME) {
+                    winmgr.switch_focused_win();
                     continue;
                 }
                 // WIP: Scroll window is in progress.
