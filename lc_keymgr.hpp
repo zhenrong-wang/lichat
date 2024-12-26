@@ -1,3 +1,9 @@
+/*
+ * Copyright (C) 2022-present Zhenrong WANG
+ * This code is distributed under the license: MIT License
+ * mailto: zhenrongwang@live.com | X/Twitter: wangzhr4
+ */
+
 #ifndef LC_KEYMGR_HPP
 #define LC_KEYMGR_HPP
 
