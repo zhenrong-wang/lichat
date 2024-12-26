@@ -1,0 +1,75 @@
+---
+Language: Cpp
+# Use tabs or spaces
+UseTab: Never
+IndentWidth: 4
+TabWidth: 4
+
+# Line length and breaking
+ColumnLimit: 80
+ReflowComments: true
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+
+# Alignment and spacing
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignOperands: true
+AlignTrailingComments: true
+PointerAlignment: Left
+ReferenceAlignment: Left
+SpaceAfterCStyleCast: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Braces and indentation
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterControlStatement: false
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeCatch: false
+  BeforeElse: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+# Classes and namespaces
+AccessModifierOffset: -4
+NamespaceIndentation: None
+FixNamespaceComments: true
+
+# Function declarations/definitions
+BinPackParameters: false
+BinPackArguments: false
+
+# Constructor initialization lists
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+
+# Array initialization
+Cpp11BracedListStyle: true
+
+# Switch statements
+IndentCaseLabels: true
+
+# Preprocessor directives
+IndentPPDirectives: None
+
+# Comments
+CommentPragmas: '^ IWYU pragma:'
