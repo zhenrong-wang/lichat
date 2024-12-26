@@ -9,9 +9,10 @@
 #ifndef LC_CONSTS_HPP
 #define LC_CONSTS_HPP
 
+#include "sodium.h"
+
 #include <iostream>
 #include <array>
-#include "sodium.h"
 
 // Critical bytes
 constexpr uint8_t CID_BYTES = 8;
