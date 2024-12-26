@@ -108,8 +108,6 @@ constexpr char input_password[] = "\nPassword format:\n1) 4-32 ascii chars.\n\
 constexpr char retype_password[] = "Re-type to confirm: ";
 constexpr char connection_reset[] = "This connection has been reset.\n\n";
 constexpr char s_signout[5] = {'[', '(', '!', ')', ']'};
-constexpr char s_signout_msg[] = "You've signed in on another client. \
-Signed out here.\nPress any key to exit.";
 constexpr char signout_close[] = "[(!)] You've signed in on another client.";
 
 #endif

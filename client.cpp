@@ -2,9 +2,10 @@
 #include "lc_keymgr.hpp"
 #include "lc_consts.hpp"
 #include "lc_bufmgr.hpp"
+#include "lc_strings.hpp"
+#include "lc_winmgr.hpp"
 
 #include <iostream>
-#include <ncurses.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <sodium.h>
@@ -25,21 +26,9 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <mutex>
+#include <condition_variable>
 
-#include <unicode/unistr.h>
-#include <unicode/ucnv.h>
-#include <unicode/ustring.h>
-
-constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
-We support Free Software and Free Speech.\n\
-Code: https://github.com/zhenrong-wang/lichat\n";
-
-const std::string prompt = "Input: ";
-const std::string send_prompt = "([SHIFT][END] to send)";
-const std::string top_bar_msg = 
-    "LiChat: Free Software (LIC: MIT) for Free Speech.";
-
-std::atomic<bool> tui_running(false);
+std::atomic<bool> core_running(false);
 std::atomic<bool> heartbeating(false);
 std::atomic<bool> auto_signout(false);
 
@@ -66,344 +55,38 @@ enum client_errors {
     SESSION_PREP_FAILED,
     UNBLOCK_SOCK_FAILED,
     WINDOW_MGR_ERROR,
-    TUI_CORE_ERROR,
+    CORE_ERROR,
 };
 
-enum thread_errors {
-    T_NORMAL_RETURN = 0,
-    T_WINDOW_NULL,
-    T_SOCK_FD_INVALID,
-    T_HEARTBEAT_TIME_OUT,
-    T_GOODBYE_SENT_ERR,
-    T_HEARTBEAT_SENT_ERR,
-    T_SOCKET_RECV_ERR,
+enum core_errors {
+    C_NORMAL_RETURN = 0,
+    C_SOCK_FD_INVALID,
+    C_HEARTBEAT_TIME_OUT,
+    C_GOODBYE_SENT_ERR,
+    C_HEARTBEAT_SENT_ERR,
+    C_SOCKET_RECV_ERR,
 };
 
-enum winmgr_errors {
-    W_NORMAL_RETURN = 0,
-    W_ALREADY_INITED,
-    W_NOT_INITIALIZED,
-    W_COLOR_NOT_SUPPORTED,
-    W_WINDOW_SIZE_INVALID,
-    W_WINDOW_CREATION_FAILED,
+enum wprint_requests {
+    PRINT_NOTHING = 0,
+    PRINT_WELCOME,
+    PRINT_HEARTBEAT_TIMEOUT,
+    PRINT_CLIENT_EXIT,
+    PRINT_SIGNED_OUT,
+    PRINT_AUTO_SIGNOUT,
+    PRINT_RECVED_MSG,
 };
 
-class lc_strings {
-public:
-// Convert a wide string to UTF-8
-    static std::string wstr_to_utf8 (const std::wstring& wstr) {
-        //std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-        //return converter.to_bytes(wstr);
-        icu::UnicodeString ustr;
-        if (sizeof(wchar_t) == 2)
-            ustr = icu::UnicodeString(
-                reinterpret_cast<const UChar *>(wstr.data(), wstr.size()));
-        else
-            ustr = icu::UnicodeString::fromUTF32(
-                reinterpret_cast<const UChar32 *>(wstr.data()), wstr.size());
-        std::string utf8_str;
-        ustr.toUTF8String(utf8_str);
-        return utf8_str;
-    }
-
-    static std::wstring utf8_to_wstr (const std::string& utf8_str) {
-        icu::UnicodeString ustr = icu::UnicodeString::fromUTF8(utf8_str);
-        std::wstring wstr;
-        int32_t required_size = 0;
-        UErrorCode uerr = U_ZERO_ERROR;
-        if (sizeof(wchar_t) == 2) {
-            u_strToWCS(nullptr, 0, &required_size, ustr.getBuffer(), 
-                       ustr.length(), &uerr);
-            if (U_FAILURE(uerr))
-                return L"";
-            wstr.resize(required_size);
-            u_strToWCS(&wstr[0], wstr.size(), nullptr, ustr.getBuffer(), 
-                       ustr.length(), &uerr);
-            if (U_FAILURE(uerr))
-                return L"";
-            return wstr;
-        }
-        else {
-            int32_t capacity = ustr.countChar32();
-            wstr.resize(capacity);
-            ustr.toUTF32((UChar32 *)(wstr.data()), capacity, uerr);
-            return wstr;
-        }
-    }
-
-    // Get the real bytes of converted wide string (to UTF-8) 
-    static size_t get_wstr_utf8_bytes (const std::wstring& wstr) {
-        return wstr_to_utf8(wstr).size();
-    }
-
-    // Calculate the actual characters of a UTF-8 string
-    static int32_t get_utf8_chars (const std::string& utf8_str) {
-        return icu::UnicodeString::fromUTF8(utf8_str).countChar32();
-    }
-
-    static size_t get_ustr_print_len (const icu::UnicodeString& ustr) {
-        size_t ret = 0;
-        auto ustr_len = ustr.length();
-        for (int32_t i = 0; i < ustr_len; ) {
-            auto wch = ustr.char32At(i);
-            if (wch <= static_cast<UChar32>(0x07FF))
-                ++ ret;
-            else
-                ret += 2;
-            i = ustr.moveIndex32(i, 1);
-        }
-        return ret;
-    }
-};
-
-struct input_buffer {
-    std::array<char, INPUT_BUFF_BYTES> ibuf;
-    size_t bytes;
-    
-    input_buffer () : bytes(0) {
-        std::memset(ibuf.data(), '\0', ibuf.size());
-    }
-};
-
-struct input_wbuff {
-    std::wstring wstr;
-    size_t bytes;
-    input_wbuff () : bytes(0) {};
-};
-
-struct point {
-    int y;
-    int x;
-    point () : y(0), x(0) {}
-    point (int y_in, int x_in) : y(y_in), x(x_in) {}
-};
-
-struct rect {
-    struct point p0;
-    struct point p1;
-    rect () : p0(point()), p1(point()) {}
-};
-
-class window_mgr {
-    WINDOW *top_bar;    // 0
-    WINDOW *top_win;    // 1
-    WINDOW *bottom_win; // 2
-    WINDOW *side_win;   // 3
-    std::array<struct rect, 4> rects;
-    WINDOW *focused_win;
-    int status;     // 0 - not initialized
-                    // 1 - created
-                    // 2 - set, ready for use, active
-                    // 3 - closable/collectable
-
-public: 
-    window_mgr () : top_bar(nullptr), top_win(nullptr), bottom_win(nullptr),
-        side_win(nullptr), focused_win(nullptr), status(0) {};
-
-    int init () {
-        if (status != 0) 
-            return W_ALREADY_INITED;
-        // Now start initialization.
-        setlocale(LC_ALL, "");
-        initscr();
-        cbreak();
-        noecho();
-
-        int height = 0, width = 0;
-        getmaxyx(stdscr, height, width);
-        if (width < WIN_WIDTH_MIN || height < WIN_HEIGHT_MIN) {
-            endwin();
-            return W_WINDOW_SIZE_INVALID;
-        }
-        top_bar = newwin(1, width - 2, 1, 1);
-        top_win = newwin(height - BOTTOM_HEIGHT - TOP_BAR_HEIGHT - 4, 
-                         width - SIDE_WIN_WIDTH - 3, TOP_BAR_HEIGHT + 2, 1);
-        bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
-                            height - BOTTOM_HEIGHT - 1, 1);
-        side_win = newwin(height - TOP_BAR_HEIGHT - 3, SIDE_WIN_WIDTH, 
-                          TOP_BAR_HEIGHT + 2, width - SIDE_WIN_WIDTH - 1);
-        if (!top_bar || !top_win || !bottom_win || !side_win) {
-            if (top_bar) delwin(top_bar);
-            if (top_win) delwin(top_win);
-            if (bottom_win) delwin(bottom_win);
-            if (side_win) delwin(side_win);
-            endwin();
-            return W_WINDOW_CREATION_FAILED;
-        }
-        
-        rects[0].p0 = {1, 1};
-        rects[0].p1 = {2, width - 1};
-        rects[1].p0 = {TOP_BAR_HEIGHT + 2, 1};
-        rects[1].p1 = {height - BOTTOM_HEIGHT - 2, width - SIDE_WIN_WIDTH - 2};
-        rects[2].p0 = {height - BOTTOM_HEIGHT - 1, 1};
-        rects[2].p1 = {height - 1, width - SIDE_WIN_WIDTH - 2};
-        rects[3].p0 = {TOP_BAR_HEIGHT + 2, width - SIDE_WIN_WIDTH - 1};
-        rects[3].p1 = {height - 1, width - 1};
-        status = 1;
-        return W_NORMAL_RETURN;
-    }
-
-    int set_win_color () {
-        if (status != 1)
-            return W_NOT_INITIALIZED;
-        if (!has_colors())
-            return W_COLOR_NOT_SUPPORTED;
-        start_color();
-        init_pair(1, COLOR_GREEN, COLOR_BLACK);     // top_bar
-        init_pair(2, COLOR_CYAN, COLOR_BLACK);      // top_win
-        init_pair(3, COLOR_YELLOW, COLOR_BLACK);    // bottom_win
-        init_pair(4, COLOR_MAGENTA, COLOR_BLACK);   // side_win
-        
-        wbkgdset(top_bar, COLOR_PAIR(1));
-        wbkgdset(top_win, COLOR_PAIR(2));
-        wbkgdset(bottom_win, COLOR_PAIR(3));
-        wbkgdset(side_win, COLOR_PAIR(4));
-
-        wrefresh(top_bar);
-        wrefresh(top_win);
-        wrefresh(bottom_win);
-        wrefresh(side_win);
-        return W_NORMAL_RETURN;
-    }
-
-    int set () {
-        if (status != 1) 
-            return W_NOT_INITIALIZED;
-        // activate keypad for input
-        keypad(bottom_win, TRUE);
-        // Activate scroll
-        scrollok(top_bar, TRUE);
-        scrollok(top_win, TRUE);
-        scrollok(bottom_win, TRUE);
-        scrollok(side_win, TRUE);
-        auto set_color = set_win_color();
-        wprintw(top_bar, top_bar_msg.c_str());
-        wrefresh(top_bar);
-        if (set_color != W_NORMAL_RETURN)
-            wprintw(top_win, "%s\n[CLIENT]: Color not supported.\n", welcome);
-        else
-            wprintw(top_win, welcome);
-        wrefresh(top_win);
-        wprintw(bottom_win, prompt.c_str());
-        wrefresh(bottom_win);
-        wprintw(side_win, "Users: \n");
-        wrefresh(side_win);
-        return W_NORMAL_RETURN;
-        status = 2;
-    }
-    // Thread risk! Please make sure the windows are not in use.
-    bool close () {
-        if (status != 3) 
-            return false;
-        delwin(top_bar);
-        delwin(top_win);
-        delwin(bottom_win);
-        delwin(side_win);
-        endwin();
-        return true;
-    }
-    void make_closable () {
-        status = 3;
-    }
-    void force_close () {
-        make_closable();
-        close();
-    }
-    const auto get_status () {
-        return status;
-    }
-    auto get_top_bar () {
-        return top_bar;
-    }
-    auto get_top_win () {
-        return top_win;
-    }
-    auto get_bottom_win () {
-        return bottom_win;
-    }
-    auto get_side_win () {
-        return side_win;
-    }
-    std::string error_to_string (int ret) {
-        if (ret == W_NORMAL_RETURN)
-            return "";
-        if (ret == W_ALREADY_INITED)
-            return "ncurses windows already initialized.";
-        if (ret == W_COLOR_NOT_SUPPORTED)
-            return "The terminal doesn't support color";
-        if (ret == W_WINDOW_SIZE_INVALID) {
-            std::ostringstream oss;
-            oss << "Window size too small (min: w x h " 
-                << (int)WIN_WIDTH_MIN << " x " << (int)WIN_HEIGHT_MIN << " ).";
-            return oss.str();
-        }
-        if (ret == W_WINDOW_CREATION_FAILED) 
-            return "Failed to create windows.";
-        if (ret == W_NOT_INITIALIZED) 
-            return "ncurses windows not initialized.";
-        else 
-            return "Unknown error. Probably a bug triggered.";
-    }
-
-    void clear_input(const std::string& prompt) {
-        if (bottom_win == nullptr) 
-            return;
-        int w = getmaxx(bottom_win);
-        if (w <= 0) 
-            return;
-        //int start_y = prompt.size() / w, start_x = prompt.size() % w;
-        mvwprintw(bottom_win, 0, 0, prompt.c_str());
-        //wmove(bottom_win, start_y, start_x);
-        wclrtobot(bottom_win);
-        wrefresh(bottom_win);
-    }
-
-    bool refresh_input (const std::string& prompt, const input_wbuff& input) {
-        if (bottom_win == nullptr) return false;
-        int w = getmaxx(bottom_win);
-        int start_y = prompt.size() / w, start_x = prompt.size() % w;
-        wmove(bottom_win, start_y, start_x);
-        wclrtobot(bottom_win);
-        mvwprintw(bottom_win, start_y, start_x, "%s [%d]  %s", 
-                  lc_strings::wstr_to_utf8(input.wstr).c_str(), 
-                  input.wstr.size(), send_prompt.c_str());
-        wrefresh(bottom_win);
-        return true;
-    }
-
-    void switch_focused_win () {
-        std::string win_name;
-        if (focused_win == nullptr) {
-            focused_win = top_bar;
-            win_name = "  (focused: top_bar)";
-        } 
-        else if (focused_win == top_bar) {
-            focused_win = top_win;
-            win_name = "  (focused: msg_win)";
-        } 
-        else if (focused_win == top_win) {
-            focused_win = bottom_win;
-            win_name = "  (focused: input_win)";
-        }
-        else if (focused_win == bottom_win) {
-            focused_win = side_win;
-            win_name = "  (focused: side_win)";
-        }  
-        else {
-            focused_win = nullptr;
-            win_name = "  (focused: none)";
-        }
-        int top_bar_w = getmaxx(top_bar);
-        std::string blank(top_bar_w, ' ');
-        mvwprintw(top_bar, 0, 0, blank.c_str());
-        mvwprintw(top_bar, 0, 0, "%s%s", top_bar_msg.c_str(), win_name.c_str());
-        wrefresh(top_bar);
-    }
-
-    WINDOW *get_focused_win () {
-        return focused_win;
-    }
-};
+const std::string heartbeat_timeout_msg = 
+    "\nHeartbeat failed. Press any key to exit.\n";
+const std::string client_exit_msg = 
+    "[CLIENT] Will notify the server and exit.\n";
+const std::string signed_out_msg = 
+    "[CLIENT] Signed out. Press any key to exit.\n";
+const std::string auto_signout_msg = 
+    "Signed in on another client. Signed out here.\nPress any key to exit.\n";
+const std::string send_gdy_failed = 
+    "Failed to notify the server. Force exit.\n";
 
 class curr_user {
     std::string unique_email;
@@ -648,8 +331,6 @@ class lichat_client {
     client_session session;
     key_mgr_25519 client_key;
     msg_buffer buffer;
-    input_wbuff input;
-    //input_buffer input;
     std::vector<std::string> messages;
     curr_user user;
     window_mgr winmgr;
@@ -661,7 +342,7 @@ public:
         client_fd(-1), server_pk_mgr(client_server_pk_mgr()), 
         key_dir(default_key_dir), session(client_session()), 
         client_key(key_mgr_25519(key_dir, "client_")), buffer(msg_buffer()), 
-        input(input_wbuff()), user(curr_user()), winmgr(window_mgr()),
+        user(curr_user()), winmgr(window_mgr()),
         last_error(0) {
 
         server_port = DEFAULT_SERVER_PORT;
@@ -712,20 +393,18 @@ public:
             return "Unknown server error.";
     }
 
-    std::string parse_thread_err (const int& thread_err) {
-        if (thread_err == T_NORMAL_RETURN) 
+    std::string parse_core_err (const int& core_err) {
+        if (core_err == C_NORMAL_RETURN) 
             return "Thread exit normally / gracefully.";
-        else if (thread_err == T_WINDOW_NULL)
-            return "Some of the windows are null.";
-        else if (thread_err == T_SOCK_FD_INVALID)
+        else if (core_err == C_SOCK_FD_INVALID)
             return "The provided socket fd is invalid";
-        else if (thread_err == T_SOCKET_RECV_ERR) 
+        else if (core_err == C_SOCKET_RECV_ERR) 
             return "Socket communication error.";
-        else if (thread_err == T_HEARTBEAT_SENT_ERR) 
+        else if (core_err == C_HEARTBEAT_SENT_ERR) 
             return "Failed to send heartbeat packets.";
-        else if (thread_err == T_GOODBYE_SENT_ERR) 
+        else if (core_err == C_GOODBYE_SENT_ERR) 
             return "Failed to send goodbye packet.";
-        else if (thread_err == T_HEARTBEAT_TIME_OUT)
+        else if (core_err == C_HEARTBEAT_TIME_OUT)
             return "Heartbeat timeout.";
         else
             return "Unknown thread error. Possibly a bug.";
@@ -739,14 +418,6 @@ public:
         if (fcntl(client_fd, F_SETFL, flags) == -1)
             return false;
         return true;
-    }
-
-    static void wprint_array(WINDOW *win, const uint8_t *arr, const size_t n) {
-        wprintw(win, "\n");
-        for (size_t i = 0; i < n; ++ i) 
-            wprintw(win, "%x ", arr[i]);
-        wprintw(win, "\n");
-        wrefresh(win);
     }
 
     static int simple_send_stc (const int fd, const client_session& curr_s, 
@@ -840,8 +511,6 @@ public:
     }
 
     static void thread_heartbeat () {
-        // heartbeating was set to false, passive stop
-        // heartbeat timeout, active stop
         while (heartbeating) {
             auto now = lc_utils::now_time();
             if (now - last_heartbeat_recv >= HEARTBEAT_TIMEOUT_SECS) {
@@ -871,21 +540,15 @@ public:
         return true;
     }
 
-    static void thread_run_core (window_mgr& wins, 
-        const int fd, msg_buffer& buff, client_session& s, 
-        const client_server_pk_mgr& server_pk, const curr_user& u,
+    static void thread_run_core (window_mgr& w, const int fd, msg_buffer& buff, 
+        client_session& s, const curr_user& u,
+        const client_server_pk_mgr& server_pk, 
         const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
-        int& thread_err) {
-        
-        thread_err = T_NORMAL_RETURN;
-        auto top_win = wins.get_top_win();
-        auto side_win = wins.get_side_win();
-        if (top_win == nullptr || side_win == nullptr) {
-            thread_err = T_WINDOW_NULL;
-            return;
-        }
+        int& core_err) {
+              
+        core_err = C_NORMAL_RETURN;
         if (fd < 0) {
-            thread_err = T_SOCK_FD_INVALID;
+            core_err = C_SOCK_FD_INVALID;
             return;
         }
         bool is_msg_recved = false;
@@ -903,35 +566,28 @@ public:
         std::array<uint8_t, HEARTBEAT_BYTES> hb_pack;
         std::array<uint8_t, GOODBYE_BYTES> gby_pack;
 
-        wprintw(top_win, "\n[SYSTEM] Your unique email: %s\n", 
-                u.get_uemail().c_str());     
-        wprintw(top_win, "[SYSTEM] Your unique username: %s\n\n", 
-                u.get_uname().c_str()); 
-        wrefresh(top_win);
+        w.welcome_user(u.get_uemail(), u.get_uname());
 
-        while (tui_running) {
+        while (core_running) {
             if (heartbeat_timeout) {
-                wprintw(top_win, "\nHeartbeat failed. Press any key to exit.\n");     
-                wrefresh(top_win);
-                thread_err = T_HEARTBEAT_TIME_OUT;
+                w.wprint_to_output(heartbeat_timeout_msg);
+                core_err = C_HEARTBEAT_TIME_OUT;
                 return;
             }
             if (send_gby_req) {
-                wprintw(top_win, "[CLIENT] Will notify the server and exit.\n");     
-                wrefresh(top_win);
+                w.wprint_to_output(client_exit_msg);
                 if (!pack_goodbye(s.get_cinfo_hash_bytes(), 
                     client_k.get_sign_sk(), gby_pack)) {
-                    thread_err = T_GOODBYE_SENT_ERR;
+                    core_err = C_GOODBYE_SENT_ERR;
                     return;
                 }
                 if (simple_send_stc(fd, s, gby_pack.data(), 
                     gby_pack.size()) < 0) {
-                    thread_err = T_HEARTBEAT_SENT_ERR;
+                    core_err = C_HEARTBEAT_SENT_ERR;
                     return;
                 }
+                w.wprint_to_output(signed_out_msg);
                 send_gby_req.store(false);
-                wprintw(top_win, "[CLIENT] Signed out. Press any key to exit.\n");     
-                wrefresh(top_win);
                 return;
             }
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
@@ -958,12 +614,12 @@ public:
                         if (heartbeat_req) {
                             if (!pack_heartbeat(s.get_cinfo_hash_bytes(),
                                 client_k.get_sign_sk(), hb_pack)) {
-                                thread_err = T_HEARTBEAT_SENT_ERR;
+                                core_err = C_HEARTBEAT_SENT_ERR;
                                 return;
                             }
                             if (simple_send_stc(fd, s, hb_pack.data(), 
                                 hb_pack.size()) < 0) {
-                                thread_err = T_HEARTBEAT_SENT_ERR;
+                                core_err = C_HEARTBEAT_SENT_ERR;
                                 return;
                             }
                             last_heartbeat_sent.store(lc_utils::now_time());
@@ -972,7 +628,7 @@ public:
                         continue;
                     }
                 }
-                thread_err = T_SOCKET_RECV_ERR;
+                core_err = C_SOCKET_RECV_ERR;
                 return;
             }
             if (bytes < CLIENT_RECV_MIN_BYTES) 
@@ -1042,173 +698,16 @@ public:
                 is_msg_recved = true;
                 if (msg_len == sizeof(s_signout) && 
                     std::memcmp(s_signout, msg_beg, sizeof(s_signout)) == 0) {
-                    // A special encrypted message [!!!] received.
-                    // Auto signed out on another client.
-                    wprintw(top_win, s_signout_msg);
-                    wrefresh(top_win);
+                    
+                    w.wprint_to_output(auto_signout_msg);
                     auto_signout.store(true);
                     return;
                 }
             }
-            if (is_msg_recved) 
-                fmt_prnt_msg(top_win, msg_vec.back(), u.get_uname());
-        }
-    }
-
-    // Every RAW message must start with at least:
-    // timestamp,uname(or system), msg_body
-    // Currenty this only handles narrow chars, not wide chars.
-
-    static int fmt_for_print (std::string& utf8_out, const std::string& utf8_in, 
-        const int col_start, const int col_end, const int win_width,
-        const bool left_align) {
-        if (utf8_in.empty())
-            return -1;
-        if (win_width <= 2 || col_start < 0 || col_end <= 0)
-            return 1;
-        if (col_end <= col_start || col_start >= win_width || col_end == 0)
-            return 1;
-        size_t line_len = static_cast<size_t>(col_end - col_start);
-        size_t prefix_len = static_cast<size_t>(col_start); // Should be non-negative.
-        size_t suffix_len = static_cast<size_t>(win_width - col_end); // Should be non-negative.
-        std::string prefix(prefix_len, ' ');
-        std::string suffix(suffix_len, ' ');
-
-        auto ustr = icu::UnicodeString::fromUTF8(utf8_in);
-        auto ustr_plen = lc_strings::get_ustr_print_len(ustr);
-
-        auto is_single_line = [](const icu::UnicodeString& ustr, const size_t& len) {
-            if (lc_strings::get_ustr_print_len(ustr) > len) 
-                return false;
-            for (int32_t i = 0; i < ustr.length(); ) {
-                if (ustr.char32At(i) == '\r' || ustr.char32At(i) == '\n')
-                    return false;
-                i = ustr.moveIndex32(i, 1);
+            if (is_msg_recved) {
+                w.fmt_prnt_msg(msg_vec.back(), u.get_uname());
             }
-            return true;
-        };
-        // Handle single line input.
-        if (is_single_line(ustr, line_len)) {
-            std::string padding(line_len - ustr_plen, ' ');
-            if (left_align)
-                utf8_out = prefix + utf8_in + padding + suffix;
-            else 
-                utf8_out = prefix + padding + utf8_in + suffix;
-            return 0;
         }
-        
-        // Handle multiple line input.
-        // All lines would be left aligned.
-        struct split {
-            size_t pos;
-            int pdn;    // 0: nothing, 1: suffix, 2: 1 byte + suffix
-            split (size_t p, int flag) : pos(p), pdn(flag) {}
-        };
-        utf8_out.clear();
-        std::vector<struct split> splits;
-        size_t len_tmp = 0;
-        splits.push_back(split(0, 0));
-        for (int32_t i = 0; i < ustr.length(); ) {
-            if (ustr.char32At(i) == '\n' || ustr.char32At(i) == '\r') {
-                splits.push_back(split(i + 1, 0));
-                len_tmp = 0;
-                i = ustr.moveIndex32(i, 1);
-                continue;
-            }
-            auto char_pw = (!iswprint(ustr.char32At(i))) ? 0 : 
-                            ((ustr.char32At(i) <= (UChar32)0x7FF) ? 1 : 2);
-            if (len_tmp + char_pw > line_len) {
-                if (len_tmp + char_pw - line_len == char_pw)
-                    splits.push_back(split(i, 1));
-                else 
-                    splits.push_back(split(i, 2));
-                len_tmp = char_pw;
-            }
-            else {
-                len_tmp += char_pw;
-            }
-            i = ustr.moveIndex32(i, 1);
-        }
-        size_t idx = 0;
-        while (idx < splits.size() - 1) {
-            len_tmp = splits[idx + 1].pos - splits[idx].pos;
-            auto u_substr = ustr.tempSubString(splits[idx].pos, len_tmp);
-            std::string utf8_substr;
-            u_substr.toUTF8String(utf8_substr);
-            if (splits[idx + 1].pdn == 0) 
-                utf8_out += (prefix + utf8_substr);
-            else if (splits[idx + 1].pdn == 1) 
-                utf8_out += (prefix + utf8_substr + suffix);
-            else
-                utf8_out += (prefix + utf8_substr + " " + suffix);
-            ++ idx;
-        }
-        auto u_substr_last = ustr.tempSubString(splits[idx].pos, 
-                                  ustr.length() - splits[idx].pos);
-        auto u_substr_plen = lc_strings::get_ustr_print_len(u_substr_last);
-        std::string padding(line_len - u_substr_plen, ' ');
-        std::string utf8_substr_last;
-        u_substr_last.toUTF8String(utf8_substr_last);
-        utf8_out += prefix + utf8_substr_last + padding + suffix;
-        return 0;
-    }
-
-    static int fmt_prnt_msg (WINDOW *win, const std::string& utf8_msg,
-        const std::string& uname) {
-
-        if (win == nullptr)
-            return -1;
-        if (utf8_msg.empty())
-            return 1;
-        
-        // The standard format:
-        // timestamp,sender_uname,utf8_msg_body
-        auto parsed_msg = lc_utils::split_buffer(
-            reinterpret_cast<const uint8_t *>(utf8_msg.data()), 
-            utf8_msg.size(), ',', 3);
-        if (parsed_msg.size() < 3)
-            return 3; // Not a valid message
-        std::string timestmp = parsed_msg[0];
-        std::string msg_uname = parsed_msg[1];
-        std::string bare_msg = utf8_msg.substr(parsed_msg[0].size() + 1 + 
-                                              parsed_msg[1].size() + 1);
-        
-        if (bare_msg.empty())
-            return 5;
-
-        int height = 0, width = 0, pos = 0;
-
-        // Important: before running the tui, we have checked the width is >=
-        // min_width, which is 48. So the top_win width should be at least 32.
-        // So the self_col_start >= 16; other_col_end >= 24.
-        // So the construction of std::string(size, char) should work because
-        // the provided size are positive. Although without strict check.
-        getmaxyx(win, height, width);
-        int col_start, col_end;
-        std::string fmt_name, fmt_timestmp, fmt_msg;
-        bool left_align = true;
-
-        if (msg_uname == uname) {
-            col_start = (width < 2) ? 0 : (width / 2); // value >= 0
-            col_end = width;
-            left_align = false;
-            fmt_for_print(fmt_name, std::string("[YOU] ") + uname + ":", 
-                          col_start, col_end, width, left_align);
-        }
-        else {
-            col_start = 0;
-            col_end = (width * 3 / 4);
-            fmt_for_print(fmt_name, msg_uname + ":", col_start, col_end, width, 
-                          left_align);
-        }
-        fmt_for_print(fmt_timestmp, timestmp, col_start, col_end, width, 
-                      left_align);
-        fmt_for_print(fmt_msg, bare_msg, col_start, col_end, width, left_align);
-
-        std::string fmt_lines = fmt_name + fmt_timestmp + fmt_msg;
-        wprintw(win, "%s\n", fmt_lines.c_str());
-        wrefresh(win);
-        return 0;
     }
 
     // Close server and possible FD
@@ -1874,9 +1373,15 @@ public:
             }
         }
 
-        //thread_run = true;
         if (!nonblock_socket()) 
             return close_client(UNBLOCK_SOCK_FAILED);
+
+        send_msg_req.store(false);
+        send_gby_req.store(false);
+        core_running.store(true);
+        heartbeating.store(true);
+        auto_signout.store(false);
+        heartbeat_timeout.store(false);
 
         auto ret = winmgr.init();
         if (ret != W_NORMAL_RETURN) {
@@ -1884,103 +1389,33 @@ public:
             return close_client(WINDOW_MGR_ERROR);
         }
         winmgr.set();
-
-        send_msg_req.store(false);
-        send_gby_req.store(false);
-        tui_running.store(true);
-        heartbeating.store(true);
-        auto_signout.store(false);
-        heartbeat_timeout.store(false);
-
-        int thread_err = 0;
-        std::thread tui(std::bind(thread_run_core, winmgr, client_fd, buffer, 
-            session, server_pk_mgr, user, client_key, messages, thread_err));
+        // Start the heartbeat thread.
         std::thread heartbeat(thread_heartbeat);
-
-        wint_t wch = 0;
-        MEVENT ev;
-
-        // heartbeat_timeout: timeout exit
-        // auto_signout: signed in on another client.
-        // q!: normal exit
-        while (!heartbeat_timeout && !auto_signout) {
-            int res = wget_wch(winmgr.get_bottom_win(), &wch);
-            input.bytes = lc_strings::get_wstr_utf8_bytes(input.wstr);
-            auto input_done = false;
-            if (res != OK) { // key input
-                if (wch == KEY_BACKSPACE) {
-                    if (input.bytes > 0)
-                        input.wstr.pop_back();
-                    winmgr.refresh_input(prompt, input);
-                    continue;
-                }
-                if (wch == KEY_SHOME) {
-                    winmgr.switch_focused_win();
-                    continue;
-                }
-                // WIP: Scroll window is in progress.
-                /*if (wch == KEY_UP) {
-                    wscrl(winmgr.get_clicked_win(), 1);
-                    wrefresh(winmgr.get_clicked_win());
-                    continue;
-                }
-                if (wch == KEY_DOWN) {
-                    wscrl(winmgr.get_clicked_win(), -1);
-                    wrefresh(winmgr.get_clicked_win());
-                    continue;
-                }*/
-                if (wch != KEY_SEND) 
-                    continue;
-                else 
-                    input_done = true;
-            }
-            else {
-                if (input.bytes == INPUT_BUFF_BYTES - 1)
-                    input_done = true;
-            }
-            if (input_done) {
-                if (input.bytes == 0) 
-                    continue;
-                if (input.wstr == L":q!") {
-                    send_gby_req.store(true);
-                    wget_wch(winmgr.get_bottom_win(), &wch);
-                    break;
-                }
-                mtx.lock();
-                send_msg_body = lc_strings::wstr_to_utf8(input.wstr);
-                mtx.unlock();
-                send_msg_req.store(true);
-                input.wstr = L"";
-                winmgr.clear_input(prompt);
-                continue;
-            }
-            if (wch == L'\t') 
-                input.wstr += L"    ";
-            else if (iswprint(wch) || wch == '\n' || wch == '\r')
-                input.wstr.push_back(wch);
-            else 
-                continue;
-            winmgr.refresh_input(prompt, input);
-        }
+        // Start the core thread.
+        int core_err = 0;
+        std::thread core(std::bind(thread_run_core, winmgr, client_fd, buffer, 
+            session, user, server_pk_mgr, client_key, messages, core_err));
+        
+        auto input_ret = winmgr.winput();
         if (heartbeat_timeout) 
-            thread_err = T_HEARTBEAT_TIME_OUT;
-        // Stop the heartbeating thread
+            core_err = C_HEARTBEAT_TIME_OUT;
+        // Stop the threads.
         heartbeating.store(false);
-        // Stop the tui thread
-        tui_running.store(false);
-        // Heartbeat should be joinable.
+        core_running.store(false);
+        // They should be joinable.
+        core.join();
         heartbeat.join();
-        // TUI should be joinable.
-        tui.join();
+
         // Clear ncurses resources.
         winmgr.force_close();
+
         // Print thread errors.
         if (auto_signout)
             std::cout << signout_close << std::endl;
-        std::cout << parse_thread_err(thread_err) << std::endl;
-        if (thread_err == T_NORMAL_RETURN)
+        std::cout << parse_core_err(core_err) << std::endl;
+        if (core_err == C_NORMAL_RETURN)
             return true;
-        return close_client(TUI_CORE_ERROR);
+        return close_client(CORE_ERROR);
     }
 };
 
