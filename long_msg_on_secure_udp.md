@@ -22,7 +22,7 @@ Long messages are different from short messages because UDP is unreliable by its
 Therefore, we need to follow a mechanism:
 
 - Each long message has a random unique message_id, aka `msg_uid`
-- Each long message is divided into chunks/blocks, and each chunk/block has a fixed length, e.g. 4096 bytes. For UDP communication, each chunk should be restricted to 65536 bytes.
+- Each long message is divided into chunks/blocks, and each chunk/block has a fixed length, e.g. 4096 bytes.
 - Therefore, a long message could be expressed by: (`number_of_chunks` `chunk_size` `last_chunk_bytes`).
 - A long message could be either **encrypted** or **signed**. Please refer to the secure UDP communication protocol.
 - Above the secure layer (**encrypted** or **signed**), a chunk packet starts with a variable-length header:
