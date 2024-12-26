@@ -22,6 +22,7 @@ const std::string send_prompt = "([SHIFT][END] to send)";
 const std::string top_bar_msg = 
     "LiChat: Free Software (LIC: MIT) for Free Speech.";
 
+/* These external variables should be defined in the client core code. */
 extern std::atomic<bool> send_msg_req;
 extern std::atomic<bool> send_gby_req;
 extern std::string send_msg_body;
