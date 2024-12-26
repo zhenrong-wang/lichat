@@ -1,3 +1,9 @@
+/*
+ * Copyright (C) 2022-present Zhenrong WANG
+ * This code is distributed under the license: MIT License
+ * mailto: zhenrongwang@live.com | X/Twitter: wangzhr4
+ */
+
 #include "lc_common.hpp"
 #include "lc_keymgr.hpp"
 #include "lc_consts.hpp"
@@ -13,9 +19,9 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <vector>
-#include <cstring>      // For C string 
-#include <algorithm>    // For std::find_if
-#include <sstream>      // For stringstream
+#include <cstring>    
+#include <algorithm> 
+#include <sstream> 
 #include <unordered_map>
 #include <chrono>
 #include <stdexcept>
@@ -26,7 +32,6 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <mutex>
-#include <condition_variable>
 
 std::atomic<bool> core_running(false);
 std::atomic<bool> heartbeating(false);
@@ -42,6 +47,31 @@ std::atomic<time_t> last_heartbeat_recv(0);
 
 std::string send_msg_body;
 std::mutex mtx;
+
+/**
+ * This is the client core code. 
+ * It could be integrated with a front-end class `window_mgr`
+ * 
+ * A window_mgr should provide methods:
+ *  - init()                : initialize the window environment
+ *  - set()                 : set attributes
+ *  - err_to_string()       : convert error code to string
+ *  - winput()              : handle user inputs in a loop
+ *  - force_close()         : close the window environment
+ *  - welcome_user()        : print welcome message
+ *  - wprint_to_output()    : print message to the output window
+ *  - fmt_prnt_msg()        : print messages in a formatted way
+ * 
+ * A window_mgr needs to include these global variables:
+ *  - std::atomic<bool> send_msg_req
+ *  - std::atomic<bool> send_gby_req
+ *  - std::string send_msg_body
+ *  - std::mutex mtx
+ *  - std::atomic<bool> auto_signout
+ *  - std::atomic<bool> heartbeat_timeout
+ * 
+ * Please refer to "lc_winmgr.hpp" for the default ncurses-based code.
+ */
 
 enum client_errors {
     NORMAL_RETURN = 0,
@@ -65,16 +95,6 @@ enum core_errors {
     C_GOODBYE_SENT_ERR,
     C_HEARTBEAT_SENT_ERR,
     C_SOCKET_RECV_ERR,
-};
-
-enum wprint_requests {
-    PRINT_NOTHING = 0,
-    PRINT_WELCOME,
-    PRINT_HEARTBEAT_TIMEOUT,
-    PRINT_CLIENT_EXIT,
-    PRINT_SIGNED_OUT,
-    PRINT_AUTO_SIGNOUT,
-    PRINT_RECVED_MSG,
 };
 
 const std::string heartbeat_timeout_msg = 

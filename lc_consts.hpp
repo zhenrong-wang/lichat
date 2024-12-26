@@ -1,3 +1,11 @@
+/*
+ * Copyright (C) 2022-present Zhenrong WANG
+ * This code is distributed under the license: MIT License
+ * mailto: zhenrongwang@live.com | X/Twitter: wangzhr4
+ */
+
+/* CONSTANTS used by this project. */
+
 #ifndef LC_CONSTS_HPP
 #define LC_CONSTS_HPP
 

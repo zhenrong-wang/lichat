@@ -1,7 +1,8 @@
-// This is the *simplest* UDP (Message based) echo server in C++ for learning
-// Originally written by Zhenrong WANG (zhenrongwang@live.com | X/Twitter: @wangzhr4)
-// Prerequisites: libsodium. You need to install it before compiling this code
-// Compile: g++ udp_chatroom.cpp -lsodium
+/*
+ * Copyright (C) 2022-present Zhenrong WANG
+ * This code is distributed under the license: MIT License
+ * mailto: zhenrongwang@live.com | X/Twitter: wangzhr4
+ */
 
 #include "lc_keymgr.hpp"
 #include "lc_consts.hpp"
