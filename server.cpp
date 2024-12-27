@@ -344,7 +344,7 @@ class user_mgr {
     // key: unique_unames
     // value: unique_email
     std::unordered_map<std::string, std::string> uname_uemail;
-    std::string user_list_fmt;
+    //std::string user_list_fmt;
 
 public:
     user_mgr () {}
@@ -603,7 +603,7 @@ public:
         new_user.pass_hash = hashed_pass;
         user_db.insert({uemail, new_user});
         uname_uemail.insert({uname, uemail});
-        user_list_fmt += (uname + " (" + uemail + ") " + "\n");
+        //user_list_fmt += (uname + " (" + uemail + ") " + "\n");
         std::ofstream file_out(db_file_path, std::ios::binary | std::ios::app);
         if (!file_out.is_open()) {
             err = 13;
@@ -668,8 +668,14 @@ public:
         return ret;
     }
 
-    std::string& get_user_list () {
-        return user_list_fmt;
+    std::string get_user_list () const {
+        std::string u_list;
+        for (auto it : user_db) {
+            auto u = it.second;
+            u_list += u.unique_name + 
+                      ((u.user_status == 0) ? (" (in)\n") : ("\n"));
+        }
+        return u_list;
     }
 
     std::string get_user_list (bool show_status) {
