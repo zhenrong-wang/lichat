@@ -13,13 +13,6 @@
 #include <array>
 #include "sodium.h"
 
-// Client Window related
-constexpr int WIN_HEIGHT_MIN = 16;
-constexpr int WIN_WIDTH_MIN = 52;
-constexpr int SIDE_WIN_WIDTH = 16;
-constexpr int BOTTOM_HEIGHT = 7;
-constexpr int TOP_BAR_HEIGHT = 1;
-
 // Critical bytes
 constexpr uint8_t CID_BYTES = 8;
 constexpr uint8_t SID_BYTES = 8;

@@ -19,6 +19,15 @@
 #include <mutex>
 #include <atomic>
 
+constexpr int WIN_HEIGHT_MIN = 16;
+constexpr int WIN_WIDTH_MIN = 52;
+
+constexpr int TOP_BAR_HEIGHT = 1;
+constexpr int BOTTOM_HEIGHT_MIN = 6;
+constexpr int BOTTOM_HEIGHT_MAX = 12;
+constexpr int SIDE_WIDTH_MIN = ULOGIN_MIN_BYTES + 8;
+constexpr int SIDE_WIDTH_MAX = UNAME_MAX_BYTES + 8;
+
 constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
@@ -97,13 +106,25 @@ public:
             endwin();
             return W_WINDOW_SIZE_INVALID;
         }
-        top_bar = newwin(1, width - 2, 1, 1);
-        top_win = newwin(height - BOTTOM_HEIGHT - TOP_BAR_HEIGHT - 4, 
-                         width - SIDE_WIN_WIDTH - 3, TOP_BAR_HEIGHT + 2, 1);
-        bottom_win = newwin(BOTTOM_HEIGHT, width - SIDE_WIN_WIDTH - 3, 
-                            height - BOTTOM_HEIGHT - 1, 1);
-        side_win = newwin(height - TOP_BAR_HEIGHT - 3, SIDE_WIN_WIDTH, 
-                          TOP_BAR_HEIGHT + 2, width - SIDE_WIN_WIDTH - 1);
+        
+        int bottom_height = ((height / 3) < BOTTOM_HEIGHT_MIN) ? 
+                            BOTTOM_HEIGHT_MIN : 
+                            (((height / 3) > BOTTOM_HEIGHT_MAX) ? 
+                            BOTTOM_HEIGHT_MAX : (height / 3));
+
+        int side_win_width = ((width / 4) < SIDE_WIDTH_MIN) ?
+                             SIDE_WIDTH_MIN :
+                             (((width / 4) > SIDE_WIDTH_MAX) ?
+                             SIDE_WIDTH_MAX : (width / 4));
+
+        top_bar = newwin(TOP_BAR_HEIGHT, width - 2, 1, 1);
+        top_win = newwin(height - bottom_height - TOP_BAR_HEIGHT - 4, 
+                         width - side_win_width - 3, TOP_BAR_HEIGHT + 2, 1);
+        bottom_win = newwin(bottom_height, width - side_win_width - 3, 
+                            height - bottom_height - 1, 1);
+        side_win = newwin(height - TOP_BAR_HEIGHT - 3, side_win_width, 
+                          TOP_BAR_HEIGHT + 2, width - side_win_width - 1);
+                          
         if (!top_bar || !top_win || !bottom_win || !side_win) {
             if (top_bar) delwin(top_bar);
             if (top_win) delwin(top_win);
@@ -112,15 +133,16 @@ public:
             endwin();
             return W_WINDOW_CREATION_FAILED;
         }
-        
+
         rects[0].p0 = {1, 1};
         rects[0].p1 = {2, width - 1};
         rects[1].p0 = {TOP_BAR_HEIGHT + 2, 1};
-        rects[1].p1 = {height - BOTTOM_HEIGHT - 2, width - SIDE_WIN_WIDTH - 2};
-        rects[2].p0 = {height - BOTTOM_HEIGHT - 1, 1};
-        rects[2].p1 = {height - 1, width - SIDE_WIN_WIDTH - 2};
-        rects[3].p0 = {TOP_BAR_HEIGHT + 2, width - SIDE_WIN_WIDTH - 1};
+        rects[1].p1 = {height - bottom_height - 2, width - side_win_width - 2};
+        rects[2].p0 = {height - bottom_height - 1, 1};
+        rects[2].p1 = {height - 1, width - side_win_width - 2};
+        rects[3].p0 = {TOP_BAR_HEIGHT + 2, width - side_win_width - 1};
         rects[3].p1 = {height - 1, width - 1};
+        
         status = 1;
         return W_NORMAL_RETURN;
     }
