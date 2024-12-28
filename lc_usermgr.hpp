@@ -1,13 +1,12 @@
 #pragma once
 
+#include <sstream>
 #include <string>
 #include <unordered_map>
-#include <sstream>
 
 // The user storage is in memory, no persistence. Just for demonstration.
 // Please consider using a database if you'd like to go further.
-class user_mgr
-{
+class user_mgr {
     std::string db_file_path;
     // key: unique_email
     // value: user_item
@@ -16,7 +15,7 @@ class user_mgr
     // key: unique_unames
     // value: unique_email
     std::unordered_map<std::string, std::string> uname_uemail;
-    std::string user_list_fmt;
+    std::string                                  user_list_fmt;
 
 public:
     user_mgr() {}
@@ -69,11 +68,11 @@ public:
         file_in.seekg(skip, std::ios::beg);
         if (!file_in)
             return 7; // Not a valid file format.
-        bool fread_error = false;
-        size_t load_items = 0;
+        bool   fread_error = false;
+        size_t load_items  = 0;
         while (true) {
-            uint8_t uemail_bytes;
-            uint8_t uname_bytes;
+            uint8_t                                  uemail_bytes;
+            uint8_t                                  uname_bytes;
             std::array<char, crypto_pwhash_STRBYTES> passhash_read;
             file_in.read(reinterpret_cast<char*>(&uemail_bytes), 1);
             if (file_in.gcount() != 1) {
@@ -86,7 +85,7 @@ public:
             }
             // Uemail length is 4~256, but uint8_t is 0~255, so we need to
             // minus 1 when write it, and plus 1 when read it.
-            size_t uemail_read_bytes = static_cast<size_t>(uemail_bytes) + 1;
+            size_t            uemail_read_bytes = static_cast<size_t>(uemail_bytes) + 1;
             std::vector<char> uemail_read(uemail_read_bytes);
             file_in.read(uemail_read.data(), uemail_read.size());
             if (file_in.gcount() != uemail_read_bytes) {
@@ -110,10 +109,8 @@ public:
                 fread_error = true;
                 break;
             }
-            std::string uemail_str(uemail_read.begin(),
-                                   uemail_read.begin() + uemail_read.size());
-            std::string uname_str(uname_read.begin(),
-                                  uname_read.begin() + uname_read.size());
+            std::string uemail_str(uemail_read.begin(), uemail_read.begin() + uemail_read.size());
+            std::string uname_str(uname_read.begin(), uname_read.begin() + uname_read.size());
             if (lc_utils::email_fmt_check(uemail_str) != 0)
                 continue;
             if (lc_utils::user_name_fmt_check(uname_str) != 0)
@@ -124,8 +121,8 @@ public:
                 continue;
             struct user_item new_user;
             new_user.unique_email = uemail_str;
-            new_user.unique_name = uname_str;
-            new_user.pass_hash = passhash_read;
+            new_user.unique_name  = uname_str;
+            new_user.pass_hash    = passhash_read;
             user_db.insert({uemail_str, new_user});
             uname_uemail.insert({uname_str, uemail_str});
             ++load_items;
@@ -145,17 +142,10 @@ public:
     static std::string email_to_uid(const std::string& valid_email)
     {
         uint8_t sha256_hash[crypto_hash_sha256_BYTES];
-        crypto_hash_sha256(
-            sha256_hash,
-            reinterpret_cast<const unsigned char*>(valid_email.c_str()),
-            valid_email.size());
+        crypto_hash_sha256(sha256_hash, reinterpret_cast<const unsigned char*>(valid_email.c_str()), valid_email.size());
 
         char b64_cstr[crypto_hash_sha256_BYTES * 2];
-        sodium_bin2base64(b64_cstr,
-                          crypto_hash_sha256_BYTES * 2,
-                          sha256_hash,
-                          crypto_hash_sha256_BYTES,
-                          sodium_base64_VARIANT_ORIGINAL);
+        sodium_bin2base64(b64_cstr, crypto_hash_sha256_BYTES * 2, sha256_hash, crypto_hash_sha256_BYTES, sodium_base64_VARIANT_ORIGINAL);
 
         return std::string(b64_cstr);
     }
@@ -167,23 +157,18 @@ public:
     bool randomize_username(std::string& uname)
     {
         uint8_t random_suffix3[3], random_suffix6[6], random_suffix9[9];
-        auto check = [](std::string& str, uint8_t* bytes, size_t n) {
-            size_t b64_size = sodium_base64_encoded_len(
-                n, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
+        auto    check = [](std::string& str, uint8_t* bytes, size_t n) {
+            size_t b64_size = sodium_base64_encoded_len(n, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
 
             std::vector<char> b64_cstr(b64_size);
-            std::string new_name;
+            std::string       new_name;
             randombytes_buf(bytes, n);
-            sodium_bin2base64(b64_cstr.data(),
-                              b64_size,
-                              bytes,
-                              n,
-                              sodium_base64_VARIANT_URLSAFE_NO_PADDING);
+            sodium_bin2base64(b64_cstr.data(), b64_size, bytes, n, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
             if (str.size() + 1 + b64_size > UNAME_MAX_BYTES) {
                 auto pos = UNAME_MAX_BYTES - 1 - b64_size;
-                new_name =
-                    str.substr(0, pos) + "-" + std::string(b64_cstr.data());
-            } else {
+                new_name = str.substr(0, pos) + "-" + std::string(b64_cstr.data());
+            }
+            else {
                 new_name = str + "-" + std::string(b64_cstr.data());
             }
             return new_name;
@@ -252,14 +237,9 @@ public:
         return user_db.size();
     }
 
-    bool add_user(const std::string& uemail,
-                  std::string& uname,
-                  std::string& user_password,
-                  uint8_t& err,
-                  bool& is_uname_randomized)
+    bool add_user(const std::string& uemail, std::string& uname, std::string& user_password, uint8_t& err, bool& is_uname_randomized)
     {
-
-        err = 0;
+        err                 = 0;
         is_uname_randomized = false;
         if (lc_utils::email_fmt_check(uemail) != 0) {
             err = 1;
@@ -291,8 +271,8 @@ public:
         }
         struct user_item new_user;
         new_user.unique_email = uemail;
-        new_user.unique_name = uname;
-        new_user.pass_hash = hashed_pass;
+        new_user.unique_name  = uname;
+        new_user.pass_hash    = hashed_pass;
         user_db.insert({uemail, new_user});
         uname_uemail.insert({uname, uemail});
         user_list_fmt += (uname + " (" + uemail + ") " + "\n");
@@ -301,9 +281,8 @@ public:
             err = 13;
             return false;
         }
-        size_t bytes_to_write =
-            1 + uemail.size() + 1 + uname.size() + hashed_pass.size();
-        size_t offset = 0;
+        size_t               bytes_to_write = 1 + uemail.size() + 1 + uname.size() + hashed_pass.size();
+        size_t               offset         = 0;
         std::vector<uint8_t> block(bytes_to_write);
         block[0] = static_cast<uint8_t>(uemail.size() - 1);
         ++offset;
@@ -313,8 +292,7 @@ public:
         ++offset;
         std::copy(uname.begin(), uname.end(), block.begin() + offset);
         offset += uname.size();
-        std::copy(
-            hashed_pass.begin(), hashed_pass.end(), block.begin() + offset);
+        std::copy(hashed_pass.begin(), hashed_pass.end(), block.begin() + offset);
         file_out.write(reinterpret_cast<char*>(block.data()), block.size());
         if (file_out.fail()) {
             err = 13;
@@ -325,14 +303,10 @@ public:
 
     // type = 0: uemail + password
     // type = 1 (or others): uname + password
-    bool user_pass_check(const uint8_t type,
-                         const std::string& str,
-                         std::string& password,
-                         uint8_t& err)
+    bool user_pass_check(const uint8_t type, const std::string& str, std::string& password, uint8_t& err)
     {
-
         user_item* ptr_item = nullptr;
-        err = 0;
+        err                 = 0;
         if (type == 0x00) {
             if (!is_email_registered(str)) {
                 err = 2;
@@ -340,7 +314,8 @@ public:
                 return false;
             }
             ptr_item = get_user_item_by_uemail(str);
-        } else {
+        }
+        else {
             if (!is_username_occupied(str)) {
                 err = 4;
                 password.clear();
@@ -353,9 +328,7 @@ public:
             password.clear();
             return false;
         }
-        auto ret = (crypto_pwhash_str_verify((ptr_item->pass_hash).data(),
-                                             password.c_str(),
-                                             password.size()) == 0);
+        auto ret = (crypto_pwhash_str_verify((ptr_item->pass_hash).data(), password.c_str(), password.size()) == 0);
 
         password.clear();
         if (!ret)
@@ -375,11 +348,9 @@ public:
         std::string list_with_status;
         for (auto& it : user_db) {
             if (it.second.user_status == 1)
-                list_with_status += (it.second.unique_name + " (" +
-                                     it.second.unique_email + ") (in)\n");
+                list_with_status += (it.second.unique_name + " (" + it.second.unique_email + ") (in)\n");
             else
-                list_with_status += ((it.second.unique_name) + " (" +
-                                     it.second.unique_email + ")\n");
+                list_with_status += ((it.second.unique_name) + " (" + it.second.unique_email + ")\n");
         }
         return list_with_status;
     }
@@ -394,26 +365,24 @@ public:
 
     // type = 0: uemail
     // type = 1 (or others): uname
-    bool bind_user_ctx(const uint8_t type,
-                       const std::string& str,
-                       const uint64_t& cif)
+    bool bind_user_ctx(const uint8_t type, const std::string& str, const uint64_t& cif)
     {
         auto ptr_user = get_user_item(type, str);
         if (ptr_user == nullptr)
             return false;
         ptr_user->user_status = 1;
-        ptr_user->bind_cif = cif;
+        ptr_user->bind_cif    = cif;
         return true;
     }
 
     bool unbind_user_ctx(const uint8_t type, const std::string& str)
     {
         user_item* ptr_item = nullptr;
-        auto ptr_user = get_user_item(type, str);
+        auto       ptr_user = get_user_item(type, str);
         if (ptr_item == nullptr)
             return false;
         ptr_item->user_status = 0;
-        ptr_item->bind_cif = 0;
+        ptr_item->bind_cif    = 0;
         return true;
     }
 
