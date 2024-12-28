@@ -13,8 +13,6 @@
 #include "lc_long_msg.hpp"
 #include "ClientSocket.hpp"
 
-#include <ncurses.h>
-
 #include <iostream>
 #include <sodium.h>
 #include <vector>
@@ -908,7 +906,7 @@ public:
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
         std::array<uint8_t, SID_BYTES> sid;
         std::array<uint8_t, CIF_BYTES> cif_bytes;
-        auto begin = buffer.recv_raw_buffer.begin();
+        auto begin = buffer.recv_raw_buffer.data();
         size_t offset = 0; // Omit first byte 0x10.
         unsigned long long aes_dec_len = 0;
         auto header = buffer.recv_raw_buffer[0];
@@ -921,7 +919,7 @@ public:
         offset += crypto_aead_aes256gcm_NPUBBYTES;
         auto ret = 
             (crypto_aead_aes256gcm_decrypt(
-                buffer.recv_aes_buffer.begin(), &aes_dec_len, NULL,
+                buffer.recv_aes_buffer.data(), &aes_dec_len, NULL,
                 begin + offset, recved_raw_bytes - offset,
                 NULL, 0,
                 aes_nonce.data(), aes_key.data()
@@ -1073,7 +1071,7 @@ public:
                 if (status == 1) {
                     offset = 0;
                     auto header = buffer.recv_raw_buffer[0];
-                    auto beg = buffer.recv_raw_buffer.begin();
+                    auto beg = buffer.recv_raw_buffer.data();
                     ++ offset;
                     if ((buffer.recv_raw_bytes == sizeof(server_ff_failed)) && 
                         (std::memcmp(beg, server_ff_failed, 
@@ -1144,7 +1142,7 @@ public:
                     
                     auto is_aes_ok = 
                         (crypto_aead_aes256gcm_decrypt(
-                            buffer.recv_aes_buffer.begin(), 
+                            buffer.recv_aes_buffer.data(), 
                             reinterpret_cast<unsigned long long *>(&aes_dec_len),
                             NULL, beg + offset, 
                             SID_BYTES + CIF_BYTES + sizeof(ok) + 
@@ -1156,7 +1154,7 @@ public:
                     buffer.recv_aes_bytes = aes_dec_len;
                     auto is_msg_ok = ((aes_dec_len == SID_BYTES + 
                         CIF_BYTES + sizeof(ok)) && 
-                        (std::memcmp(buffer.recv_aes_buffer.begin() + 
+                        (std::memcmp(buffer.recv_aes_buffer.data() + 
                             SID_BYTES + CIF_BYTES, ok, sizeof(ok)) == 0));
 
                     auto aes_beg = buffer.recv_aes_buffer.begin();
@@ -1214,7 +1212,7 @@ public:
                 if (status == 2) {
                     offset = 0;
                     auto header = buffer.recv_raw_buffer[0];
-                    auto beg = buffer.recv_raw_buffer.begin();
+                    auto beg = buffer.recv_raw_buffer.data();
                     // 1 + 6-byte err + CIF + deleted_sid + server_sign_pk + signed(server_cpk)
                     size_t expected_err_size = 1 + ERR_CODE_BYTES + CIF_BYTES + 
                                                SID_BYTES + 
@@ -1278,7 +1276,7 @@ public:
                     offset += crypto_aead_aes256gcm_NPUBBYTES;
                     auto is_aes_ok = 
                         (crypto_aead_aes256gcm_decrypt(
-                            buffer.recv_aes_buffer.begin(), 
+                            buffer.recv_aes_buffer.data(), 
                             reinterpret_cast<unsigned long long *>(&aes_dec_len),
                             NULL, beg + offset, 
                             SID_BYTES + CIF_BYTES + sizeof(ok) + 
@@ -1290,7 +1288,7 @@ public:
                     buffer.recv_aes_bytes = aes_dec_len;
                     if (!is_aes_ok)
                         continue; // Invalid key, probably not from the previous server.
-                    if (std::memcmp(buffer.recv_aes_buffer.begin() + 
+                    if (std::memcmp(buffer.recv_aes_buffer.data() + 
                         SID_BYTES + CIF_BYTES, ok, sizeof(ok)) != 0)
                         continue; // Not expected message ok.
 
@@ -1309,7 +1307,7 @@ public:
                     continue;
                 if (!decrypt_recv_0x10raw_bytes(buffer.recv_raw_bytes))
                     continue;
-                auto aes_beg = buffer.recv_aes_buffer.begin();
+                auto aes_beg = buffer.recv_aes_buffer.data();
                 std::copy(aes_beg, aes_beg + SID_BYTES, 
                             recved_server_sid.begin());
                 std::copy(aes_beg + SID_BYTES, aes_beg + SID_BYTES + CIF_BYTES, 
