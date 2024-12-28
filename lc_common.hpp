@@ -42,6 +42,7 @@
 #include <iostream>
 #include <regex>
 #include <vector>
+#include <sstream>
 
 namespace lc_utils
 {

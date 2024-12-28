@@ -8,13 +8,11 @@
 #include "lc_consts.hpp"
 #include "lc_bufmgr.hpp"
 #include "lc_common.hpp"
+#include "InitialiseNetworking.hpp"
+#include "ServerSocket.hpp"
 #include "lc_long_msg.hpp"
 
 #include <iostream>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <vector>
 #include <sodium.h>     // For libsodium
 #include <cstring>      // For C string 
@@ -91,8 +89,8 @@ public:
     const struct sockaddr_in& get_src_addr () const {
         return src_addr;
     }
-    void set_src_addr (const sockaddr_in& addr) {
-        src_addr = addr;
+    void set_src_addr (const sockaddr_in& address_info) {
+        src_addr = address_info;
     }
     const std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES>& 
         get_aes_gcm_key () const {
@@ -755,9 +753,7 @@ public:
 
 // The main class.
 class lichat_server {
-    struct sockaddr_in server_addr;                 // socket addr
-    uint16_t server_port;                           // port number
-    int server_fd;                                  // generated server_fd
+    lichat::net::ServerSocket socket;
     std::string key_dir;                            // Key directory
     key_mgr_25519 key_mgr;                          // key manager
     msg_buffer buffer;                              // Message core processor
@@ -769,12 +765,8 @@ class lichat_server {
     
 public:
     // A simple constructor
-    lichat_server () {
-        server_port = DEFAULT_SERVER_PORT;
-        server_addr.sin_addr.s_addr = INADDR_ANY;
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(server_port);
-        server_fd = -1;
+    lichat_server(uint16_t port) : socket{port}
+    {
         key_dir = default_key_dir;
         key_mgr = key_mgr_25519(key_dir, "server_");
         buffer = msg_buffer();
@@ -782,11 +774,6 @@ public:
         conns = session_pool();
         clients = ctx_pool();
         last_error = 0;
-    }
-
-    void set_port (uint16_t port) {
-        server_port = port;
-        server_addr.sin_port = htons(server_port);
     }
 
     void set_key_dir (const std::string& dir) {
@@ -797,10 +784,6 @@ public:
     // Close server and possible FD
     bool close_server (int err) {
         last_error = err;
-        if (server_fd != -1) {
-            close(server_fd); 
-            server_fd = -1;
-        }
         return err == 0;
     }
 
@@ -819,13 +802,9 @@ public:
             std::cout << "User database precheck failed. " << users.precheck_user_db() << std::endl;
             return close_server(USERDB_PRECHECK_FAILED);
         }
-        server_fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (server_fd == -1)
-            return close_server(SOCK_FD_INVALID);
-        if (bind(server_fd, (sockaddr *)&server_addr, (socklen_t)sizeof(server_addr)))
-            return close_server(SOCK_BIND_FAILED);
+
         std::cout << "LightChat (LiChat) Service started." << std::endl 
-                  << "UDP Listening Port: " << server_port << std::endl;
+                  << "UDP Listening Port: " << socket.port() << std::endl;
         return true;
     }
 
@@ -838,21 +817,18 @@ public:
         auto p_conn = conns.get_session(cinfo_hash);
         if (p_conn == nullptr)
             return -3; // Invalid cinfo_hash
-        auto addr = p_conn->get_src_addr();
-        return sendto(server_fd, msg, n, MSG_CONFIRM, (struct sockaddr *)&addr, 
-                        sizeof(addr));
+        auto address_info = p_conn->get_src_addr();
+        return simple_send(p_conn->get_src_addr(), msg, n);
     }
 
     // Simplify the socket send function.
-    int simple_send (const struct sockaddr_in& addr, const uint8_t *msg, 
+    int simple_send (const struct sockaddr_in& address_info, const uint8_t *msg, 
         size_t n) {
-
-        return sendto(server_fd, msg, n, MSG_CONFIRM, 
-                     (struct sockaddr *)&addr, sizeof(addr));
+        return socket.send_to(address_info, lichat::const_byte_span_t{msg, n});
     }
 
     // Simplify the socket send function.
-    int simple_send (uint8_t header, const struct sockaddr_in& addr, 
+    int simple_send (uint8_t header, const struct sockaddr_in& address_info, 
         const uint8_t *msg, size_t n) {
 
         if (n + 1 > buffer.send_buffer.size()) {
@@ -861,8 +837,7 @@ public:
         buffer.send_buffer[0] = header;
         std::copy(msg, msg + n, buffer.send_buffer.begin() + 1);
         buffer.send_bytes = n + 1;
-        return sendto(server_fd, buffer.send_buffer.data(), buffer.send_bytes, 
-                        MSG_CONFIRM, (struct sockaddr *)&addr, sizeof(addr));
+        return simple_send(address_info, buffer.send_buffer.data(), buffer.send_bytes);
     }
 
     // Simplify the socket send function.
@@ -881,7 +856,7 @@ public:
         auto cif_bytes = lc_utils::u64_to_bytes(cif);
         auto sid = conn->get_server_sid();
         auto aes_key = conn->get_aes_gcm_key();
-        auto addr = conn->get_src_addr();
+        auto address_info = conn->get_src_addr();
         // Padding the first byte
         buffer.send_buffer[0] = header;
         ++ offset;
@@ -993,7 +968,7 @@ public:
         buffer.send_bytes = offset + sign_len;
         if (res != 0) 
             return -7;
-        auto ret = simple_send(addr, buffer.send_buffer.data(), buffer.send_bytes);
+        auto ret = simple_send(address_info, buffer.send_buffer.data(), buffer.send_bytes);
         return ret;
     }
 
@@ -1018,11 +993,11 @@ public:
     }
 
     // Convert an addr to a message
-    static std::string addr_to_msg (const struct sockaddr_in addr) {
+    static std::string addr_to_msg (const struct sockaddr_in address_info) {
         std::ostringstream oss;
         char ip_cstr[INET_ADDRSTRLEN];
-        std::strncpy(ip_cstr, inet_ntoa(addr.sin_addr), INET_ADDRSTRLEN);
-        oss << ip_cstr << ":" << ntohs(addr.sin_port) << std::endl;
+        std::strncpy(ip_cstr, inet_ntoa(address_info.sin_addr), INET_ADDRSTRLEN);
+        oss << ip_cstr << ":" << ntohs(address_info.sin_port) << std::endl;
         return oss.str();
     }
 
@@ -1064,8 +1039,8 @@ public:
             auto cif_bytes = lc_utils::u64_to_bytes(cif);
             if (ptr_session == nullptr)
                 continue;
-            auto addr = ptr_session->get_src_addr();
-            if (simple_send(addr, buffer.send_buffer.data(), 
+            auto address_info = ptr_session->get_src_addr();
+            if (simple_send(address_info, buffer.send_buffer.data(), 
                 buffer.send_bytes) >= 0)
                 ++ sent_out;
         }
@@ -1102,7 +1077,7 @@ public:
         ++ offset;
         std::array<uint8_t, CIF_BYTES> cif_bytes;
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
-        auto beg = buffer.recv_raw_buffer.begin();
+        auto beg = buffer.recv_raw_buffer.data();
         unsigned long long aes_decrypted_len = 0;
         std::copy(beg + offset, beg + offset + CIF_BYTES, cif_bytes.begin());
         offset += CIF_BYTES;
@@ -1120,7 +1095,7 @@ public:
         auto sid = ptr_session->get_server_sid();
         auto ret = 
             (crypto_aead_aes256gcm_decrypt(
-                buffer.recv_aes_buffer.begin(), &aes_decrypted_len, NULL,
+                buffer.recv_aes_buffer.data(), &aes_decrypted_len, NULL,
                 beg + offset, recved_raw_bytes - offset,
                 NULL, 0,
                 aes_nonce.data(), aes_key.data()
@@ -1129,7 +1104,7 @@ public:
         if (aes_decrypted_len <= SID_BYTES)
             return false;
         if (ret) {
-            if (std::memcmp(buffer.recv_aes_buffer.begin(), sid.begin(), 
+            if (std::memcmp(buffer.recv_aes_buffer.data(), sid.data(), 
                 sid.size())==0) {
 
                 ret_cif = cinfo_hash;
@@ -1159,7 +1134,7 @@ public:
         if (buffer.recv_raw_bytes != expected_bytes)
             return false;
         size_t offset = 0;
-        auto beg = buffer.recv_raw_buffer.begin();
+        auto beg = buffer.recv_raw_buffer.data();
         ++ offset;
         if (std::memcmp(beg + offset, clnt_err_code, ERR_CODE_BYTES) != 0)
             return false; // Garbage message, ommit.
@@ -1246,20 +1221,10 @@ public:
             std::cout << "Key manager not activated." << std::endl;
             return close_server(KEYMGR_FAILED);
         }
-        if (server_fd == -1) {
-            std::cout << "Server not started." << std::endl;
-            return close_server(SOCK_FD_INVALID);
-        }
         size_t user_preloaded = 0;
         users.preload_user_db(user_preloaded);
         std::cout << "Preloaded " << user_preloaded << " users." << std::endl;
-        struct timeval tv;
-        tv.tv_sec = SERVER_RECV_WAIT_SECS;
-        tv.tv_usec = 0;
-        if (setsockopt(server_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, 
-            sizeof(tv)) < 0) {
-            return close_server(SET_TIMEOUT_FAILED);
-        }
+        
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
         size_t aes_enc_len = 0;
         size_t aes_dec_len = 0;
@@ -1278,10 +1243,7 @@ public:
             auto addr_len = sizeof(client_addr);
             unsigned long long unsign_len = 0, sign_len = 0;
             buffer.clear_buffer();
-            auto bytes_recv = recvfrom(server_fd, buffer.recv_raw_buffer.data(), 
-                                       buffer.recv_raw_buffer.size(), 0, 
-                                       (struct sockaddr *)&client_addr, 
-                                       (socklen_t *)&addr_len);
+            const auto bytes_recv = socket.receive_from(client_addr, buffer.recv_raw_buffer);
             if (bytes_recv < 0)
                 continue;
 
@@ -1305,7 +1267,7 @@ public:
             std::cout << std::dec << bytes_recv << " bytes." << std::endl;
 
             
-            auto beg = buffer.recv_raw_buffer.begin();
+            auto beg = buffer.recv_raw_buffer.data();
             size_t offset = 0;
             auto header = buffer.recv_raw_buffer[0];
             ++ offset;
@@ -1387,7 +1349,7 @@ public:
                 if (buffer.recv_raw_bytes != expected_size)
                     continue;
 
-                auto pos = buffer.recv_raw_buffer.begin() + 1;
+                auto pos = buffer.recv_raw_buffer.data() + 1;
                 std::array<uint8_t, CIF_BYTES> cinfo_hash_bytes;
                 std::copy(pos, pos + CIF_BYTES, cinfo_hash_bytes.begin());
                 std::copy(pos + CIF_BYTES, 
@@ -1405,7 +1367,7 @@ public:
                 aes_dec_len = 0;
                 auto is_aes_ok = 
                     ((crypto_aead_aes256gcm_decrypt(
-                        buffer.recv_aes_buffer.begin(), 
+                        buffer.recv_aes_buffer.data(), 
                         reinterpret_cast<unsigned long long *>(&aes_dec_len),
                         NULL,
                         pos + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES, 
@@ -1480,7 +1442,7 @@ public:
                     buffer.recv_raw_bytes != GOODBYE_BYTES)
                     continue;
                 std::array<uint8_t, CIF_BYTES> recved_cif_bytes;
-                auto beg = buffer.recv_raw_buffer.begin();
+                auto beg = buffer.recv_raw_buffer.data();
                 auto cif_pos = beg + 1 + crypto_sign_BYTES;
                 std::copy(cif_pos, cif_pos + CIF_BYTES, 
                           recved_cif_bytes.begin());
@@ -1689,7 +1651,6 @@ public:
 
 // The simplest driver. You can improve it if you'd like to go further.
 int main (int argc, char **argv) {
-    lichat_server new_server;
     if (sodium_init() < 0) {
         std::cout << "Failed to init libsodium." << std::endl;
         return 1;
@@ -1705,11 +1666,6 @@ int main (int argc, char **argv) {
     else {
         std::cout << "No port specified, using the default 8081." << std::endl;
     }
-    new_server.set_port(port);
-    if (!new_server.start_server()) {
-        std::cout << "Failed to start server. Error Code: " 
-                  << new_server.get_last_error() << std::endl;
-        return 3;
-    }
-    return new_server.run_server();
+
+    return lichat_server{port}.run_server();
 }

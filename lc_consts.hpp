@@ -9,7 +9,7 @@
 #ifndef LC_CONSTS_HPP
 #define LC_CONSTS_HPP
 
-#include "sodium.h"
+#include <sodium.h>
 
 #include <iostream>
 #include <array>

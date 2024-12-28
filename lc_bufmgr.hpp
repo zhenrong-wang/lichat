@@ -7,12 +7,28 @@
 #ifndef LC_BUFMGR_HPP
 #define LC_BUFMGR_HPP
 
+// Project includes
 #include "lc_consts.hpp"
 #include "lc_common.hpp"
+
+// Third-party includes
+#include <sodium.h>
+
+// Platform includes
+#ifdef _WIN32
+  #ifdef _WIN64
+    typedef signed long long ssize_t;
+  #else
+    typedef signed long ssize_t;
+  #endif
+#else
+  #include <sys/types.h>
+#endif
+
+// C++ std lib includes
 #include <array>
 #include <iostream>
 #include <cstring>
-#include "sodium.h"
 
 struct msg_buffer {
     std::array<uint8_t, BUFF_BYTES> recv_raw_buffer;

@@ -1,22 +1,31 @@
 ---
 Language: Cpp
+
 # Use tabs or spaces
 UseTab: Never
 IndentWidth: 4
 TabWidth: 4
 
 # Line length and breaking
-ColumnLimit: 80
+ColumnLimit: 140
 ReflowComments: true
+AlwaysBreakBeforeMultilineStrings: true
+BreakInheritanceList: BeforeComma
 AllowShortFunctionsOnASingleLine: Empty
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine: false
+# AllowShortIfStatementsOnASingleLine: InlineOnly
+AllowShortLoopsOnASingleLine: true
 AlwaysBreakTemplateDeclarations: Yes
+AllowAllConstructorInitializersOnNextLine: true
+AllowShortBlocksOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+# AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLambdasOnASingleLine: All
 
 # Alignment and spacing
 AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments: None
-AlignConsecutiveDeclarations: None
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignConsecutiveMacros: true
 AlignOperands: true
 AlignTrailingComments: true
 PointerAlignment: Left
@@ -30,35 +39,22 @@ SpacesInAngles: false
 SpacesInCStyleCastParentheses: false
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
 
 # Braces and indentation
-BreakBeforeBraces: Custom
-BraceWrapping:
-  AfterClass: true
-  AfterControlStatement: false
-  AfterEnum: true
-  AfterFunction: true
-  AfterNamespace: true
-  AfterStruct: true
-  AfterUnion: true
-  BeforeCatch: false
-  BeforeElse: false
-  IndentBraces: false
-  SplitEmptyFunction: false
-  SplitEmptyRecord: false
-  SplitEmptyNamespace: false
+BreakBeforeBraces: Stroustrup
+KeepEmptyLinesAtTheStartOfBlocks: false
 
 # Classes and namespaces
 AccessModifierOffset: -4
+CompactNamespaces: true
 NamespaceIndentation: None
 FixNamespaceComments: true
 
-# Function declarations/definitions
-BinPackParameters: false
-BinPackArguments: false
-
 # Constructor initialization lists
-BreakConstructorInitializers: BeforeColon
+BreakConstructorInitializers: BeforeComma
 ConstructorInitializerIndentWidth: 4
 ConstructorInitializerAllOnOneLineOrOnePerLine: true
 
@@ -66,10 +62,15 @@ ConstructorInitializerAllOnOneLineOrOnePerLine: true
 Cpp11BracedListStyle: true
 
 # Switch statements
-IndentCaseLabels: true
+IndentCaseLabels: false
+
+# Aliases and typedefs
+SortUsingDeclarations: true
 
 # Preprocessor directives
-IndentPPDirectives: None
+IncludeBlocks: Preserve
+SortIncludes: true
+IndentPPDirectives: AfterHash
 
 # Comments
 CommentPragmas: '^ IWYU pragma:'

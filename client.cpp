@@ -11,14 +11,12 @@
 #include "lc_strings.hpp"
 #include "lc_winmgr.hpp"
 #include "lc_long_msg.hpp"
+#include "ClientSocket.hpp"
+
+#include <ncurses.h>
 
 #include <iostream>
-#include <sys/socket.h>
-#include <unistd.h>
 #include <sodium.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
 #include <vector>
 #include <cstring>    
 #include <algorithm> 
@@ -338,8 +336,8 @@ public:
         return src_addr;
     }
 
-    void update_src_addr (const struct sockaddr_in& addr) {
-        src_addr = addr;
+    void update_src_addr (const struct sockaddr_in& address_info) {
+        src_addr = address_info;
     }
 };
 
@@ -443,9 +441,9 @@ public:
 
     static int simple_send_stc (const int fd, const client_session& curr_s, 
         const uint8_t *buf, size_t n) {
-        auto addr = curr_s.get_src_addr();
-        return sendto(fd, buf, n, 0, (const struct sockaddr*)(&addr), 
-                      sizeof(addr));
+        auto address_info = curr_s.get_src_addr();
+        return sendto(fd, buf, n, 0, (const struct sockaddr*)(&address_info), 
+                      sizeof(address_info));
     }
     // Simplify the socket send function.
     // Format : 1-byte header + 
@@ -826,9 +824,9 @@ public:
 
     int simple_send (const client_session& curr_s, 
         const uint8_t *buf, size_t n) {
-        auto addr = curr_s.get_src_addr();
+        auto address_info = curr_s.get_src_addr();
         return sendto(client_fd, buf, n, 0, 
-                        (const struct sockaddr*)(&addr), sizeof(addr));
+                        (const struct sockaddr*)(&address_info), sizeof(address_info));
     }
 
     // Simplify the socket send function.
@@ -934,7 +932,7 @@ public:
         return ret;
     }
 
-    ssize_t wait_server_response (struct sockaddr_in& addr) {
+    ssize_t wait_server_response (struct sockaddr_in& address_info) {
         buffer.clear_buffer();
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
@@ -951,7 +949,7 @@ public:
                             buffer.recv_raw_buffer.size(), 0, 
                             (struct sockaddr *)(&src_addr), 
                             (socklen_t *)&addr_len);
-        addr = src_addr;
+        address_info = src_addr;
         return ret;
     }
 

@@ -2,7 +2,14 @@ cmake_minimum_required (VERSION 3.15)
 
 project (lichat)
 
+find_package(ICU REQUIRED COMPONENTS uc)
 find_package(unofficial-sodium CONFIG REQUIRED)
+
+if(WIN32)
+    set(PLATFORM_LIBS ws2_32)
+else()
+    set(PLATFORM_LIBS "")
+endif()
 
 ###################################################################################################
 
@@ -10,16 +17,23 @@ add_executable(client
   "client.cpp"
 )
 
+set_property(TARGET client PROPERTY CXX_STANDARD 20)
+set_property(TARGET client PROPERTY CXX_STANDARD_REQUIRED ON)
+
 target_link_libraries(client
   PUBLIC
   unofficial-sodium::sodium
+  ICU::uc
 )
 
 ###################################################################################################
 
 add_executable(server
   "server.cpp"
-)
+ )
+ 
+set_property(TARGET server PROPERTY CXX_STANDARD 20)
+set_property(TARGET server PROPERTY CXX_STANDARD_REQUIRED ON)
 
 target_link_libraries(server
   PUBLIC

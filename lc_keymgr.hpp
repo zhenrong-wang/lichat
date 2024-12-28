@@ -7,9 +7,16 @@
 #ifndef LC_KEYMGR_HPP
 #define LC_KEYMGR_HPP
 
+// Project includes
 #include "lc_consts.hpp"
+
+// Third-party includes
+#include <sodium.h>
+
+// Platform includes
+
+// C++ std lib includes
 #include <vector>
-#include <sodium.h>     // For libsodium
 #include <fstream>
 #include <array>
 #include <string>
