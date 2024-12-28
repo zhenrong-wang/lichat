@@ -469,9 +469,14 @@ public:
         wrefresh(top_win);
     }
 
-    void wprint_to_output (const std::string& err_str) {
-        wprintw(top_win, err_str.c_str());
+    void wprint_to_output (const std::string& msg) {
+        wprintw(top_win, msg.c_str());
         wrefresh(top_win);
+    }
+
+    void wprint_user_list (const std::string& ulist_str) {
+        wprintw(side_win, ulist_str.c_str());
+        wrefresh(side_win);
     }
 
     static void wprint_array(WINDOW *win, const uint8_t *arr, const size_t n) {

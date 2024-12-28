@@ -8,6 +8,7 @@
 #include "lc_consts.hpp"
 #include "lc_bufmgr.hpp"
 #include "lc_common.hpp"
+#include "lc_long_msg.hpp"
 
 #include <iostream>
 #include <sys/socket.h>
@@ -28,6 +29,25 @@
 #include <regex>
 #include <random>
 #include <iomanip>
+
+/**
+ * The headers (up to 2024-12-28)
+ * ----------
+ * 0x00: initial handshake
+ * 0x01: initial handshake
+ * 0x02: AES validation
+ * ----------
+ * 0x10: encrypted message between server and client
+ * 0x11: signed broadcasting from server to all clients
+ * 0x12: signed message from server to a specific client (currently not in use)
+ * ----------
+ * 0x1F: signed heartbeat / goodbye message
+ * ----------
+ * 0x20: encrypted long message between server and client
+ * 0x21: signed broadcasting long message from server to all clients
+ * 0x22: signed long message from server to a specific client (currently for user list)
+ * ----------
+ */
 
 enum SERVER_ERRORS {
     NORMAL_RETURN = 0,
@@ -668,29 +688,19 @@ public:
         return ret;
     }
 
-    std::string get_user_list () const {
-        std::string u_list;
+    std::string user_list_to_str (bool show_status) {
+       std::string u_list;
         for (auto it : user_db) {
             auto u = it.second;
-            u_list += u.unique_name + 
-                      ((u.user_status == 0) ? (" (in)\n") : ("\n"));
+            if (show_status) {
+                u_list += u.unique_name + 
+                      ((u.user_status == 1) ? (" (in)\n") : ("\n"));
+            }
+            else {
+                u_list += u.unique_name + "\n";
+            }
         }
         return u_list;
-    }
-
-    std::string get_user_list (bool show_status) {
-        if (!show_status)
-            return get_user_list();
-        std::string list_with_status;
-        for (auto& it : user_db) {
-            if (it.second.user_status == 1)
-                list_with_status += (it.second.unique_name + " (" 
-                                    + it.second.unique_email +  ") (in)\n");
-            else
-                list_with_status += ((it.second.unique_name) + " (" 
-                                    + it.second.unique_email + ")\n");
-        }
-        return list_with_status;
     }
 
     user_item *get_user_item (const uint8_t type, const std::string& str) {
@@ -754,6 +764,7 @@ class lichat_server {
     user_mgr users;                                 // all users
     session_pool conns;                             // all sessions.
     ctx_pool clients;                               // all clients(contexts).
+    long_msg lmsg;                                  // manage long messages.
     int last_error;                                 // error code
     
 public:
@@ -837,7 +848,7 @@ public:
         size_t n) {
 
         return sendto(server_fd, msg, n, MSG_CONFIRM, 
-                        (struct sockaddr *)&addr, sizeof(addr));
+                     (struct sockaddr *)&addr, sizeof(addr));
     }
 
     // Simplify the socket send function.
@@ -859,7 +870,7 @@ public:
     //          if 0x00 header, add a 32byte pubkey, otherwise skip + 
     //          aes_nonce + 
     //          aes_gcm_encrypted (sid + cinfo_hash + msg_body)
-    int simple_secure_send (const uint8_t header, const uint64_t cif, 
+    ssize_t simple_secure_send (const uint8_t header, const uint64_t cif, 
         const uint8_t *raw_msg, size_t raw_n) {
 
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> server_aes_nonce;
@@ -882,7 +893,7 @@ public:
 
             if (!lc_utils::sign_crypto_pk(key_mgr, signed_server_cpk)) {
                 buffer.send_bytes = offset;
-                return 1;
+                return -3;
             }
             auto server_sign_pk = key_mgr.get_sign_pk();
             std::copy(server_sign_pk.begin(), server_sign_pk.end(), 
@@ -900,7 +911,7 @@ public:
                 sign_sk.data()) != 0) {
 
                 buffer.send_bytes = offset;
-                return 1;
+                return -3;
             }
             std::copy(signed_ok.begin(), signed_ok.end(), 
                         buffer.send_buffer.begin() + offset);
@@ -916,17 +927,21 @@ public:
             crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) {
 
             buffer.send_bytes = offset;
-            return 3; // buffer overflow occur.
+            return -5; // buffer overflow occur.
         }
         // Construct the raw message: sid + cif + msg_body
         std::copy(sid.begin(), sid.end(), buffer.send_aes_buffer.begin());
         std::copy(cif_bytes.begin(), cif_bytes.end(), 
                     buffer.send_aes_buffer.begin() + sid.size());
-        std::copy(raw_msg, raw_msg + raw_n, buffer.send_aes_buffer.begin() + 
-                    sid.size() + cif_bytes.size());
-        // Record the buffer occupied size.
-        buffer.send_aes_bytes = sid.size() + cif_bytes.size() + raw_n;
-
+        if (raw_msg != nullptr && raw_n > 0) {
+            std::copy(raw_msg, raw_msg + raw_n, buffer.send_aes_buffer.begin() + 
+                      sid.size() + cif_bytes.size());
+            // Record the buffer occupied size.
+            buffer.send_aes_bytes = sid.size() + cif_bytes.size() + raw_n;
+        }
+        else {
+            buffer.send_aes_bytes = sid.size() + cif_bytes.size();
+        }
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
             buffer.send_buffer.data() + offset, 
@@ -938,10 +953,47 @@ public:
         );
         buffer.send_bytes = offset + aes_encrypted_len;
         if (res != 0) 
-            return 5;
+            return -7;
         auto ret = simple_send(addr, buffer.send_buffer.data(), buffer.send_bytes);
-        if (ret < 0) 
-            return 7;
+        return ret;
+    }
+
+    ssize_t simple_sign_send (const uint8_t header, const uint64_t cif, 
+        const uint8_t *raw_msg, size_t raw_n) {
+        
+        bool raw_msg_empty = false;
+        if (raw_msg == nullptr || raw_n == 0)
+            raw_msg_empty = true;
+
+        size_t offset = 0, aes_encrypted_len = 0;
+        auto conn = conns.get_session(cif);
+        if (conn == nullptr)
+            return -1;
+        auto cif_bytes = lc_utils::u64_to_bytes(cif);
+        auto addr = conn->get_src_addr();
+        // Padding the first byte
+        buffer.send_buffer[0] = header;
+        ++ offset;
+        if (!raw_msg_empty) {
+            if (offset + crypto_sign_BYTES + raw_n > BUFF_BYTES) {
+                buffer.send_bytes = offset;
+                return -5;
+            }
+        }
+        size_t cif_msg_size = cif_bytes.size() + ((raw_msg_empty) ? 0 : raw_n);
+        std::vector<uint8_t> cif_msg(cif_msg_size);
+        std::copy(cif_bytes.begin(), cif_bytes.end(), cif_msg.begin());
+        if (!raw_msg_empty)
+            std::copy(raw_msg, raw_msg + raw_n, cif_msg.begin() + cif_bytes.size());
+        auto sign_sk = key_mgr.get_sign_sk();
+        unsigned long long sign_len = 0;
+
+        auto res = crypto_sign(buffer.send_buffer.begin() + offset,
+                   &sign_len, cif_msg.data(), cif_msg.size(), sign_sk.data());
+        buffer.send_bytes = offset + sign_len;
+        if (res != 0) 
+            return -7;
+        auto ret = simple_send(addr, buffer.send_buffer.data(), buffer.send_bytes);
         return ret;
     }
 
@@ -1089,7 +1141,7 @@ public:
     }
 
     std::string user_list_to_msg () {
-        std::string user_list_fmt = users.get_user_list(true);
+        std::string user_list_fmt = users.user_list_to_str(true);
         std::ostringstream oss;
         std::pair<size_t, size_t> stat_par = users.get_user_stat();
         oss << "[SYSTEM_INFO] currently " << stat_par.first << " signed up users, " 
@@ -1163,6 +1215,29 @@ public:
             }
         }
         return erased;
+    }
+
+    // This is not a good approach because the user list might be very large.
+    // e.g. a username is 32 byte maximum, so 1000 users would be 32 kb maximum.
+    // Sending user list would be a heavy burden for the server.
+    // Thinking about better designs.
+    // The user list is not encrypted for now. Thinking about whether it should
+    // be encrypted. Currently it is just signed.
+    bool send_user_list (const uint64_t& cif) {
+        auto ulist_str = users.user_list_to_str(true);
+        std::vector<uint8_t> ulist_vec(ulist_str.data(), 
+                                       ulist_str.data() + ulist_str.size());
+
+        if(!lmsg.prepare_chunks_to_send(ulist_vec))
+            return false;
+        auto sign_sk = key_mgr.get_sign_sk();
+        bool lmsg_send_flag = true;
+        for (auto it : lmsg.get_send_chunks()) {
+            auto res = simple_sign_send(0x22, cif, it.data(), it.size());
+            if (res < 0) 
+                return false;
+        }
+        return true;
     }
 
     // Main processing method.
@@ -1422,13 +1497,9 @@ public:
                     // All the checks done, update the addr.
                     ptr_session->set_src_addr(client_addr);
                     ptr_session->set_last_heartbeat(lc_utils::now_time());
-                    std::array<uint8_t, HEARTBEAT_BYTES> packet;
-                    packet[0] = 0x1F;
-                    if (crypto_sign(packet.data() + 1, &sign_len, 
-                        recved_cif_bytes.data(), recved_cif_bytes.size(), 
-                        key_mgr.get_sign_sk().data()) != 0) 
+                    auto res = simple_sign_send(0x1F, recved_cif, nullptr, 0);
+                    if (res == -7) 
                         return close_server(MSG_SIGNING_FAILED);
-                    simple_send(client_addr, packet.data(), packet.size());
                     continue;
                 }
                 auto last_byte = buffer.recv_raw_buffer[buffer.recv_raw_bytes - 1];
@@ -1519,10 +1590,13 @@ public:
                         simple_secure_send(0x10, cinfo_hash, 
                             reinterpret_cast<const uint8_t *>(uinfo_res.c_str()), 
                             uinfo_res.size());
-
                         this_client->set_bind_uid(reg_info[0]);
                         this_client->set_status(2);
                         users.bind_user_ctx(0, reg_info[0], cinfo_hash);
+
+                        // ToDo: Will handle the possible failures.
+                        send_user_list(cinfo_hash);
+                        
                         timestamp = lc_utils::now_time_to_str();
                         std::string bcast_msg = 
                             timestamp + ",[SYSTEM_BCAST]," + reg_info[1] + 
@@ -1576,6 +1650,10 @@ public:
                         conns.delete_session(prev_cif);
                     }
                     users.bind_user_ctx(0, uemail, cinfo_hash);
+                    
+                    // ToDo: Will handle the possible failures.
+                    send_user_list(cinfo_hash);
+
                     timestamp = lc_utils::now_time_to_str();
                     std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
                                             uname + " signed in!";

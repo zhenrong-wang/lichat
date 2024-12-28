@@ -20,7 +20,7 @@ constexpr uint8_t CIF_BYTES = 8;
 
 // User login related
 constexpr size_t ULOGIN_MIN_BYTES = 4; // uname or uemail.
-constexpr size_t UNAME_MAX_BYTES = 64;
+constexpr size_t UNAME_MAX_BYTES = 32;
 constexpr size_t UEMAIL_MAX_BYTES = 256;
 constexpr size_t PASSWORD_MAX_BYTES = 64;
 constexpr size_t PASSWORD_MIN_BYTES = 4;
@@ -38,7 +38,7 @@ constexpr uint16_t DEFAULT_SERVER_PORT = 8081;
 constexpr uint8_t ok[] = {'O', 'K'};
 
 // Buffer size
-constexpr size_t BUFF_BYTES = 4096;
+constexpr size_t BUFF_BYTES = 65536;
 constexpr size_t INPUT_BUFF_BYTES = BUFF_BYTES - 256;
 
 // Err code has 1-byte header + 6-byte body
