@@ -10,6 +10,7 @@
 #include "lc_bufmgr.hpp"
 #include "lc_strings.hpp"
 #include "lc_winmgr.hpp"
+#include "lc_long_msg.hpp"
 
 #include <iostream>
 #include <sys/socket.h>
@@ -580,6 +581,7 @@ public:
         auto aes_beg = buff.recv_aes_buffer.data();
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
+        long_msg lmsg;
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
         std::array<uint8_t, SID_BYTES> recved_sid;
         std::array<uint8_t, CIF_BYTES> recved_cif;
@@ -655,19 +657,42 @@ public:
                 continue;
             offset = 0;
             auto header = buff.recv_raw_buffer[0];
-            if (header != 0x11 && header != 0x10 && header != 0x1F)
+            if (header != 0x11 && header != 0x10 && 
+                header != 0x1F && header != 0x22)
                 continue;
-            if (header == 0x11) {
+            if (header == 0x11 || header == 0x22) {
                 ++ offset;
                 if (crypto_sign_open(nullptr, &unsign_len, raw_beg + offset,
                     bytes - 1, server_pk.get_server_spk().data()) != 0)
                     continue;
                 offset += crypto_sign_BYTES;
-                std::string msg_str(
-                    reinterpret_cast<const char *>(raw_beg + offset), 
-                    bytes - offset);
-                msg_vec.push_back(msg_str);
-                is_msg_recved = true;
+                if (header == 0x11) {
+                    std::string msg_str(
+                        reinterpret_cast<const char *>(raw_beg + offset), 
+                        bytes - offset);
+                    msg_vec.push_back(msg_str);
+                    is_msg_recved = true;
+                }
+                // Handle the user list with header of 0x22
+                else {
+                    if (std::memcmp(raw_beg + offset, cif.data(), cif.size()) != 0)
+                        continue;
+                    offset += recved_cif.size();
+                    std::vector<uint8_t> chunk(raw_beg + offset, raw_beg + bytes);
+                    auto res = lmsg.receive_chunk(chunk);
+                    if (res < 0)
+                        continue;
+                    if (res == 3) {
+                        std::string ulist;
+                        auto chunks = lmsg.get_recv_chunks();
+                        for (auto it : chunks)
+                            ulist += std::string(
+                                reinterpret_cast<char*>(it.second.data()), 
+                                it.second.size());
+                        w.wprint_user_list(ulist);
+                    }
+                    continue;
+                }
             }
             else if (header == 0x1F) {
                 if (bytes != HEARTBEAT_BYTES)
