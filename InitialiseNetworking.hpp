@@ -12,14 +12,12 @@
 #endif
 
 // C++ std lib includes
-#include <string>
 #include <stdexcept>
+#include <string>
 
-namespace lichat::net
-{
+namespace lichat::net {
 #ifdef _WIN32
-class SocketInitializer
-{
+class SocketInitializer {
 public:
     SocketInitializer()
     {
@@ -35,7 +33,6 @@ public:
     }
 };
 #else
-class SocketInitializer
-{};
+class SocketInitializer {};
 #endif
 } // namespace lichat::net

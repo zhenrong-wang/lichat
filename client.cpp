@@ -5,6 +5,7 @@
  */
 
 #include "ClientSocket.hpp"
+#include "InitialiseNetworking.hpp"
 #include "lc_bufmgr.hpp"
 #include "lc_common.hpp"
 #include "lc_consts.hpp"
@@ -1304,7 +1305,7 @@ public:
 
 int main(int argc, char** argv)
 {
-    lichat_client new_client;
+    auto _ = lichat::net::SocketInitializer{};
     if (sodium_init() < 0) {
         std::cout << "Failed to init libsodium." << std::endl;
         return 1;
@@ -1325,6 +1326,7 @@ int main(int argc, char** argv)
         std::cout << "Will use the default server localhost:8081." << std::endl;
     }
 
+    lichat_client new_client;
     if (!new_client.start_client()) {
         std::cout << "Failed to start client. Error Code: " << new_client.get_last_error() << std::endl;
         return 3;
