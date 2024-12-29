@@ -239,7 +239,7 @@ class client_session {
     bool is_server_key_req;
 
 public:
-    client_session() : status(0), is_server_key_req(false)
+    client_session(const struct sockaddr_in& address_info) : src_addr{address_info}, status{0}, is_server_key_req(false)
     {
         randombytes_buf(client_cid.data(), client_cid.size());
     }
@@ -344,50 +344,52 @@ public:
 };
 
 class lichat_client {
-    uint16_t                 server_port;
-    struct sockaddr_in       server_addr;
-    int                      client_fd;
-    client_server_pk_mgr     server_pk_mgr;
-    std::string              key_dir;
-    client_session           session;
-    key_mgr_25519            client_key;
-    msg_buffer               buffer;
-    std::vector<std::string> messages;
-    curr_user                user;
-    window_mgr               winmgr;
-    int                      last_error;
+    uint16_t                  server_port;
+    struct sockaddr_in        server_addr;
+    lichat::net::ClientSocket socket;
+    int                       client_fd;
+    client_server_pk_mgr      server_pk_mgr;
+    std::string               key_dir;
+    client_session            session;
+    key_mgr_25519             client_key;
+    msg_buffer                buffer;
+    std::vector<std::string>  messages;
+    curr_user                 user;
+    window_mgr                winmgr;
+    int                       last_error;
 
 public:
-    lichat_client()
-        : client_fd(-1)
+    lichat_client(std::string address, uint16_t port_num)
+        : server_port{port_num}
+        , server_addr{make_server_address(address, port_num)}
+        , socket{address, port_num}
+        , client_fd(-1)
         , server_pk_mgr(client_server_pk_mgr())
         , key_dir(default_key_dir)
-        , session(client_session())
+        , session{server_addr}
         , client_key(key_mgr_25519(key_dir, "client_"))
         , buffer(msg_buffer())
         , user(curr_user())
         , winmgr(window_mgr())
         , last_error(0)
-    {
-        server_port                 = DEFAULT_SERVER_PORT;
-        server_addr.sin_addr.s_addr = inet_addr(DEFAULT_SERVER_ADDR);
-        server_addr.sin_family      = AF_INET;
-        server_addr.sin_port        = htons(server_port);
-        // Store the initial addr to session.
-        session.update_src_addr(server_addr);
+    {        
+        if (client_key.key_mgr_init() != 0) {
+            std::cout << "Key manager not activated. @ START." << std::endl;
+            close_client(CLIENT_KEY_MGR_ERROR);
+        }
     }
 
-    bool set_server_addr(std::string& addr_str, std::string& port_str)
+    [[nodiscard]] static auto make_server_address(std::string_view address, uint16_t port_num) -> ::sockaddr_in
     {
-        std::array<char, INET_ADDRSTRLEN> ipv4_addr;
-        uint16_t                          port_num;
-        if (!lc_utils::get_addr_info(addr_str, ipv4_addr) || !lc_utils::string_to_u16(port_str, port_num))
-            return false;
-        server_port                 = port_num;
-        server_addr.sin_addr.s_addr = inet_addr(ipv4_addr.data());
-        server_addr.sin_port        = htons(port_num);
-        session.update_src_addr(server_addr);
-        return true;
+        auto out = lichat::net::try_make_sockaddr_in(address, port_num);
+        if (not out) {
+            std::cout << "Warning: Failed to connect to server " << address << ":" << port_num << std::endl;
+            std::cout << "Warning: Will use the default server " << DEFAULT_SERVER_ADDR << ":" << DEFAULT_SERVER_PORT << std::endl;
+            return lichat::net::make_sockaddr_in(DEFAULT_SERVER_ADDR, DEFAULT_SERVER_PORT);
+        }
+
+        std::cout << "Will connect to the provided server " << address << ":" << port_num << std::endl;
+        return out.value();
     }
 
     std::string parse_server_auth_error(const uint8_t err_code)
@@ -436,28 +438,12 @@ public:
             return "Unknown thread error. Possibly a bug.";
     }
 
-    bool nonblock_socket()
-    {
-        int flags = fcntl(client_fd, F_GETFL, 0);
-        if (flags == -1)
-            return false;
-        flags |= O_NONBLOCK;
-        if (fcntl(client_fd, F_SETFL, flags) == -1)
-            return false;
-        return true;
-    }
-
-    static int simple_send_stc(const int fd, const client_session& curr_s, const uint8_t* buf, size_t n)
-    {
-        auto address_info = curr_s.get_src_addr();
-        return sendto(fd, buf, n, 0, (const struct sockaddr*)(&address_info), sizeof(address_info));
-    }
     // Simplify the socket send function.
     // Format : 1-byte header +
     //          cinfo_hash +
     //          aes_nonce +
     //          aes_gcm_encrypted (sid + msg_body)
-    static int simple_secure_send_stc(const int fd, const uint8_t header, const client_session& curr_s, msg_buffer& buff,
+    static int simple_secure_send_stc(lichat::net::ClientSocket& socket, const uint8_t header, const client_session& curr_s, msg_buffer& buff,
                                       const uint8_t* raw_msg, size_t raw_n)
     {
         if (curr_s.get_status() == 0 || curr_s.get_status() == 1)
@@ -505,7 +491,7 @@ public:
         buff.send_bytes = offset + aes_enc_len;
         if (res != 0)
             return -5;
-        auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), buff.send_bytes);
+        auto const ret = socket.send_to(curr_s.get_src_addr(), buff.send_buffer);
         if (ret < 0)
             return -7;
         return ret;
@@ -550,15 +536,12 @@ public:
         return true;
     }
 
-    static void thread_run_core(window_mgr& w, const int fd, msg_buffer& buff, client_session& s, const curr_user& u,
+    static void thread_run_core(window_mgr& w, lichat::net::ClientSocket& socket, msg_buffer& buff, client_session& s, const curr_user& u,
                                 const client_server_pk_mgr& server_pk, const key_mgr_25519& client_k, std::vector<std::string>& msg_vec,
                                 int& core_err)
     {
         core_err = C_NORMAL_RETURN;
-        if (fd < 0) {
-            core_err = C_SOCK_FD_INVALID;
-            return;
-        }
+        
         bool                                                 is_msg_recved = false;
         struct sockaddr_in                                   src_addr;
         auto                                                 addr_len   = sizeof(src_addr);
@@ -589,7 +572,7 @@ public:
                     core_err = C_GOODBYE_SENT_ERR;
                     return;
                 }
-                if (simple_send_stc(fd, s, gby_pack.data(), gby_pack.size()) < 0) {
+                if (socket.send_to(s.get_src_addr(), gby_pack) < 0) {
                     core_err = C_HEARTBEAT_SENT_ERR;
                     return;
                 }
@@ -597,8 +580,8 @@ public:
                 send_gby_req.store(false);
                 return;
             }
-            auto bytes    = recvfrom(fd, buff.recv_raw_buffer.data(), buff.recv_raw_buffer.size(), 0, (struct sockaddr*)(&src_addr),
-                                     (socklen_t*)&addr_len);
+
+            auto const bytes = socket.receive_from(src_addr, buff.recv_raw_buffer);
             errno         = 0;
             is_msg_recved = false;
             if (bytes < 0) {
@@ -607,7 +590,7 @@ public:
                     if (send_msg_req) {
                         if (send_msg_body.size() > 0) {
                             mtx.lock();
-                            simple_secure_send_stc(fd, 0x10, s, buff, reinterpret_cast<const uint8_t*>(send_msg_body.c_str()),
+                            simple_secure_send_stc(socket, 0x10, s, buff, reinterpret_cast<const uint8_t*>(send_msg_body.c_str()),
                                                    send_msg_body.size());
                             mtx.unlock();
                         }
@@ -620,7 +603,7 @@ public:
                                 core_err = C_HEARTBEAT_SENT_ERR;
                                 return;
                             }
-                            if (simple_send_stc(fd, s, hb_pack.data(), hb_pack.size()) < 0) {
+                            if (socket.send_to(s.get_src_addr(), hb_pack) < 0) {
                                 core_err = C_HEARTBEAT_SENT_ERR;
                                 return;
                             }
@@ -715,33 +698,16 @@ public:
         }
     }
 
-    // Close server and possible FD
+    // Capture error value
     bool close_client(int err)
     {
         last_error = err;
-        if (client_fd != -1) {
-            close(client_fd);
-            client_fd = -1;
-        }
         return err == 0;
     }
 
     int get_last_error(void)
     {
         return last_error;
-    }
-
-    bool start_client(void)
-    {
-        if (client_key.key_mgr_init() != 0) {
-            std::cout << "Key manager not activated. @ START." << std::endl;
-            return close_client(CLIENT_KEY_MGR_ERROR);
-        }
-        client_fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (client_fd < 0)
-            return close_client(SOCK_FD_INVALID);
-        std::cout << "lichat client started. Handshaking now ..." << std::endl;
-        return true;
     }
 
     std::vector<uint8_t> assemble_user_info(const bool is_signup, const bool is_login_uemail, const std::string& uemail,
@@ -784,12 +750,6 @@ public:
     void print_menu(void)
     {
         std::cout << main_menu << std::endl;
-    }
-
-    int simple_send(const client_session& curr_s, const uint8_t* buf, size_t n)
-    {
-        auto address_info = curr_s.get_src_addr();
-        return sendto(client_fd, buf, n, 0, (const struct sockaddr*)(&address_info), sizeof(address_info));
     }
 
     // Simplify the socket send function.
@@ -844,7 +804,7 @@ public:
         buffer.send_bytes = offset + aes_enc_len;
         if (res != 0)
             return -5;
-        auto ret = simple_send(curr_s, buffer.send_buffer.data(), buffer.send_bytes);
+        auto const ret = socket.send_to(curr_s.get_src_addr(), buffer.send_buffer);
         if (ret < 0)
             return -7;
         return ret;
@@ -879,20 +839,15 @@ public:
     ssize_t wait_server_response(struct sockaddr_in& address_info)
     {
         buffer.clear_buffer();
-        struct sockaddr_in src_addr;
-        auto               addr_len = sizeof(src_addr);
-        struct timeval     tv;
-        tv.tv_sec  = HANDSHAKE_TIMEOUT_SECS;
-        tv.tv_usec = 0;
 
-        if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        if (socket.set_timeout(std::chrono::seconds{HANDSHAKE_TIMEOUT_SECS}) == SOCKET_ERROR_VALUE) {
             return -127;
         }
 
-        auto ret     = recvfrom(client_fd, buffer.recv_raw_buffer.data(), buffer.recv_raw_buffer.size(), 0, (struct sockaddr*)(&src_addr),
-                                (socklen_t*)&addr_len);
+        auto [recvd_bytes, src_addr] = socket.receive(buffer.recv_raw_buffer);
         address_info = src_addr;
-        return ret;
+
+        return recvd_bytes.size();
     }
 
     bool user_input(const std::string& prompt, std::string& dest_str, size_t max_times, bool is_password,
@@ -982,7 +937,7 @@ public:
 
                 std::copy(signed_cid_cpk.begin(), signed_cid_cpk.end(), buffer.send_buffer.begin() + offset);
                 buffer.send_bytes = offset + signed_cid_cpk.size();
-                simple_send(session, buffer.send_buffer.data(), buffer.send_bytes);
+                socket.send_to(session.get_src_addr(), buffer.send_buffer);
 
                 // 0x00: requested server key, 0x01: not requested server key
                 session.sent_cinfo((buffer.send_buffer[0] == 0x00));
@@ -1098,7 +1053,7 @@ public:
 
                     std::copy(signed_cid_cpk.begin(), signed_cid_cpk.end(), buffer.send_buffer.begin() + offset);
                     buffer.send_bytes = offset + signed_cid_cpk.size();
-                    simple_send(session, buffer.send_buffer.data(), buffer.send_bytes);
+                    socket.send_to(session.get_src_addr(), buffer.send_buffer);
                     session.reset();
                     continue;
                 }
@@ -1257,8 +1212,9 @@ public:
             }
         }
 
-        if (!nonblock_socket())
+        if (not socket.make_nonblocking()) {
             return close_client(UNBLOCK_SOCK_FAILED);
+        }
 
         send_msg_req.store(false);
         send_gby_req.store(false);
@@ -1278,7 +1234,7 @@ public:
         // Start the core thread.
         int         core_err = 0;
         std::thread core(
-            std::bind(thread_run_core, winmgr, client_fd, buffer, session, user, server_pk_mgr, client_key, messages, core_err));
+            std::bind(thread_run_core, winmgr, std::ref(socket), buffer, session, user, server_pk_mgr, client_key, messages, core_err));
 
         auto input_ret = winmgr.winput();
         if (heartbeat_timeout)
@@ -1303,36 +1259,47 @@ public:
     }
 };
 
-int main(int argc, char** argv)
+struct Args {
+    std::string server_address{DEFAULT_SERVER_ADDR};
+    uint16_t    server_port{DEFAULT_SERVER_PORT};
+};
+
+[[nodiscard]] auto parse_args(std::span<const char*> args) -> Args
 {
-    auto _ = lichat::net::SocketInitializer{};
-    if (sodium_init() < 0) {
-        std::cout << "Failed to init libsodium." << std::endl;
-        return 1;
-    }
-    if (argc >= 3) {
-        std::string addr_str(argv[1]);
-        std::string port_str(argv[2]);
-        std::cout << "Trying to connect to server " << addr_str << ":" << port_str << std::endl;
-        if (!new_client.set_server_addr(addr_str, port_str)) {
-            std::cout << "Warning: Failed to connect to server " << addr_str << ":" << port_str << std::endl;
-            std::cout << "Warning: Will use the default server localhost:8081." << std::endl;
-        }
-        else {
-            std::cout << "Will connect to the provided server " << addr_str << ":" << port_str << std::endl;
-        }
+    auto out = Args{};
+    if (args.size() >= 3) {
+        out.server_address = args[1];
+        out.server_port    = lc_utils::to<uint16_t>(args[2]);
     }
     else {
         std::cout << "Will use the default server localhost:8081." << std::endl;
     }
 
-    lichat_client new_client;
-    if (!new_client.start_client()) {
-        std::cout << "Failed to start client. Error Code: " << new_client.get_last_error() << std::endl;
-        return 3;
+    return out;
+}
+
+int main(size_t argc, const char** argv)
+{
+    try {
+        const auto [address, port_num] = parse_args(std::span{argv, argc});
+        std::cout << "Trying to connect to server " << address << ":" << port_num << std::endl;
+
+        auto _ = lichat::net::NetworkingInitializer{};
+        if (sodium_init() < 0) {
+            std::cout << "Failed to init libsodium." << std::endl;
+            return 1;
+        }
+
+        auto new_client = lichat_client{address, port_num};
+
+        if (not new_client.run_client()) {
+            std::cout << "Client running failure. Error Code: " << new_client.get_last_error() << std::endl;
+        }
+
+        return new_client.get_last_error();
     }
-    if (!new_client.run_client()) {
-        std::cout << "Client running failure. Error Code: " << new_client.get_last_error() << std::endl;
+    catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return -1;
     }
-    return new_client.get_last_error();
 }

@@ -17,9 +17,9 @@
 
 namespace lichat::net {
 #ifdef _WIN32
-class SocketInitializer {
+class NetworkingInitializer {
 public:
-    SocketInitializer()
+    NetworkingInitializer()
     {
         auto wsaData = ::WSADATA{};
         if (::WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -27,12 +27,12 @@ public:
         }
     }
 
-    ~SocketInitializer()
+    ~NetworkingInitializer()
     {
         WSACleanup();
     }
 };
 #else
-class SocketInitializer {};
+class NetworkingInitializer {};
 #endif
 } // namespace lichat::net

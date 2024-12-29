@@ -40,9 +40,16 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <format>
 #include <regex>
+#include <span>
 #include <sstream>
+#include <string>
+#include <string_view>
 #include <vector>
+#include <concepts>
+#include <charconv>
+#include <stdexcept>
 
 namespace lc_utils {
 
@@ -200,18 +207,36 @@ static bool string_to_u16(const std::string& str, uint16_t& res)
     return true;
 }
 
-static bool get_addr_info(std::string& addr_str, std::array<char, INET_ADDRSTRLEN>& first_ipv4_addr)
+template<std::integral I>
+[[nodiscard]] auto to(std::string_view s) -> I
+{
+    auto out       = I{};
+    auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
+    if (ec == std::errc::invalid_argument or ec == std::errc::result_out_of_range) {
+        throw std::invalid_argument{std::format("cannot convert {} to {}-byte integer", s, sizeof(I))};
+    }
+
+    if (end != s.data() + s.size()) {
+        throw std::invalid_argument{std::format("{} contains un-expected, non-integral data", s, sizeof(I))};
+    }
+
+    return out;
+}
+
+static bool get_addr_info(std::string_view addr_str, std::span<char> first_ipv4_addr)
 {
     if (addr_str.empty())
         return false;
+
     struct addrinfo hints, *res = nullptr;
     std::memset(&hints, 0, sizeof hints);
     hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     std::memset(first_ipv4_addr.data(), 0, first_ipv4_addr.size());
-    auto status = getaddrinfo(addr_str.c_str(), nullptr, &hints, &res);
+    auto status = getaddrinfo(std::string{addr_str}.c_str(), nullptr, &hints, &res);
     if (status != 0)
         return false;
+
     struct sockaddr_in* first = (sockaddr_in*)res->ai_addr;
     inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), first_ipv4_addr.size());
     freeaddrinfo(res);
@@ -236,7 +261,7 @@ void print_array(const uint8_t* arr, const size_t n)
 {
     printf("\n");
     for (size_t i = 0; i < n; ++i) printf("%x ", arr[i]);
-    printf("\n %lu \n", n);
+    printf("\n %llu \n", n);
 }
 
 static std::string now_time_to_str(void)

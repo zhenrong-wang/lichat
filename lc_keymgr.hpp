@@ -163,13 +163,14 @@ public:
 
     int key_mgr_init()
     {
-        if (!is_empty)
+        if (not is_empty) {
             return 0; // If already init.
-        auto ret = load_local_key_files();
-        if (ret != 0) {
-            if (gen_key_save_to_local() != 0)
-                return 1;
+        }  
+
+        if (load_local_key_files() != 0 and gen_key_save_to_local() != 0) {
+            return 1;
         }
+
         is_empty = false;
         return 0;
     }

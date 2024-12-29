@@ -1,10 +1,15 @@
 #pragma once
 
+// Project includes
+#include "lc_common.hpp"
+
 // Platform includes
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
 #    include <windows.h>
 #    include <winsock2.h>
+#    include <ws2ipdef.h>
+#    include <ws2tcpip.h>
 #    pragma comment(lib, "ws2_32.lib")
 #else
 #    include <sys/socket.h>
@@ -109,6 +114,56 @@ auto make_sockaddr_in(uint16_t port) -> ::sockaddr_in
     out.sin_addr.s_addr = INADDR_ANY;
     out.sin_port        = htons(port);
     return out;
+}
+
+auto try_make_sockaddr_in(std::string_view address, uint16_t port) -> std::optional<::sockaddr_in>
+{
+    auto ipv4_addr = std::string(INET_ADDRSTRLEN, '\0');
+    if (not lc_utils::get_addr_info(address, ipv4_addr)) {
+        return {};
+    }
+
+    auto out            = ::sockaddr_in{};
+    out.sin_addr.s_addr = inet_addr(ipv4_addr.data());
+    out.sin_port        = htons(port);
+
+    return out;
+}
+
+auto make_sockaddr_in(std::string_view address, uint16_t port) -> ::sockaddr_in
+{
+    auto out = try_make_sockaddr_in(address, port);
+    if (not out) {
+        throw std::runtime_error{std::format("Failed to create sockaddr_in from address: {}, port: {}", address, port)};
+    }
+
+    return out.value();
+}
+
+[[nodiscard]] auto make_socket_nonblocking(socket_t socket_handle) -> bool
+{
+#ifdef _WIN32
+    auto mode = u_long{1};
+    if (ioctlsocket(socket_handle, FIONBIO, &mode) == SOCKET_ERROR) {
+        auto const error = WSAGetLastError();
+        std::cerr << "Failed to set socket to non-blocking mode. Error: " << error << std::endl;
+        return false;
+    }
+
+    return true;
+#else
+    auto flags = fcntl(client_fd, F_GETFL, 0);
+    if (flags == -1) {
+        return false;
+    }
+
+    flags |= O_NONBLOCK;
+    if (fcntl(client_fd, F_SETFL, flags) == -1) {
+        return false;
+    }
+
+    return true;
+#endif
 }
 
 } // namespace lichat::net

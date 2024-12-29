@@ -934,7 +934,7 @@ public:
         buffer.send_bytes = offset + aes_encrypted_len;
         if (res != 0)
             return -7;
-        auto ret = simple_send(addr, buffer.send_buffer.data(), buffer.send_bytes);
+        auto ret = simple_send(address_info, buffer.send_buffer.data(), buffer.send_bytes);
         return ret;
     }
 
@@ -963,15 +963,15 @@ public:
         std::vector<uint8_t> cif_msg(cif_msg_size);
         std::copy(cif_bytes.begin(), cif_bytes.end(), cif_msg.begin());
         if (!raw_msg_empty)
-            std::copy(raw_msg, raw_msg + raw_n, cif_msg.begin() + cif_bytes.size());
+            std::copy(raw_msg, raw_msg + raw_n, cif_msg.data() + cif_bytes.size());
         auto               sign_sk  = key_mgr.get_sign_sk();
         unsigned long long sign_len = 0;
 
-        auto res          = crypto_sign(buffer.send_buffer.begin() + offset, &sign_len, cif_msg.data(), cif_msg.size(), sign_sk.data());
+        auto res          = crypto_sign(buffer.send_buffer.data() + offset, &sign_len, cif_msg.data(), cif_msg.size(), sign_sk.data());
         buffer.send_bytes = offset + sign_len;
         if (res != 0)
             return -7;
-        auto ret = simple_send(address_info, buffer.send_buffer.data(), buffer.send_bytes);
+        auto ret = simple_send(addr, buffer.send_buffer.data(), buffer.send_bytes);
         return ret;
     }
 
