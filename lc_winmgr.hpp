@@ -427,6 +427,13 @@ public:
         
         if (bare_msg.empty())
             return 5;
+        
+        // Print the system users to the side window.
+        if (msg_uname == "[SYSTEM_USERS]") {
+            wprintw(side_win, bare_msg.c_str());
+            wrefresh(side_win);
+            return 0;
+        }
 
         int height = 0, width = 0, pos = 0;
 

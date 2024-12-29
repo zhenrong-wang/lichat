@@ -89,6 +89,18 @@ namespace lc_utils {
         return num;
     }
 
+    static std::array<uint8_t, 2> u16_to_bytes (uint16_t num) {
+        std::array<uint8_t, 2> ret;
+        ret[0] = static_cast<uint8_t>(num & (0xFF));
+        ret[1] = static_cast<uint8_t>((num >> 8) & (0xFF));
+        return ret;
+    }
+
+    static uint16_t bytes_to_u16 (std::array<uint8_t, 2> arr) {
+        return static_cast<uint16_t>(arr[0]) | 
+               static_cast<uint16_t>(arr[1] << 8);
+    }
+
     static void generate_aes_nonce (
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES>& aes256gcm_nonce) {
         
@@ -321,6 +333,34 @@ namespace lc_utils {
     #endif
         std::cout << std::endl;
         return p;
+    }
+
+    static std::vector<uint8_t> u16vec_to_u8 (const std::vector<uint16_t>& u16vec) {
+        std::vector<uint8_t> ret(u16vec.size() * 2);
+        for (size_t i = 0; i < u16vec.size(); ++ i) {
+            ret[i * 2] = static_cast<uint8_t>(u16vec[i] & (0xFF));
+            ret[i * 2 + 1] = static_cast<uint8_t>((u16vec[i] >> 8) & (0xFF));
+        }
+        return ret;
+    }
+
+    static std::vector<uint16_t> u8vec_to_u16 (const std::vector<uint8_t>& u8vec) {
+        size_t size = (u8vec.size() % 2) ? (u8vec.size() / 2 + 1) :
+                      (u8vec.size() / 2);
+        std::vector<uint16_t> ret(size);
+        size_t j = 0;
+        for (size_t i = 0; i < u8vec.size(); ) {
+            if (i + 1 < u8vec.size()) {
+                ret[j] = static_cast<uint16_t>(u8vec[i]) | 
+                         static_cast<uint16_t>(u8vec[i + 1] << 8);
+            }
+            else {
+                ret[j] = static_cast<uint16_t>(u8vec[i]);
+            }
+            i = i + 2;
+            ++ j;
+        }
+        return ret;
     }
 }
 
