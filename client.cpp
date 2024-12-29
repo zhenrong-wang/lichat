@@ -45,6 +45,7 @@ std::atomic<bool> heartbeat_timeout(false);
 
 std::atomic<time_t> last_heartbeat_sent(0);
 std::atomic<time_t> last_heartbeat_recv(0);
+std::atomic<time_t> last_lmsg_check(0);
 
 std::string send_msg_body;
 std::mutex mtx;
@@ -108,6 +109,8 @@ const std::string auto_signout_msg =
     "Signed in on another client. Signed out here.\nPress any key to exit.\n";
 const std::string send_gdy_failed = 
     "Failed to notify the server. Force exit.\n";
+const std::string lmsg_recv_failed = 
+    "Failed to receive long message.\n";
 
 class curr_user {
     std::string unique_email;
@@ -353,6 +356,8 @@ class lichat_client {
     key_mgr_25519 client_key;
     msg_buffer buffer;
     std::vector<std::string> messages;
+    lmsg_send_pool lmsg_sends; 
+    lmsg_recv_pool lmsg_recvs;
     curr_user user;
     window_mgr winmgr;
     int last_error;
@@ -454,13 +459,20 @@ public:
     //          aes_gcm_encrypted (sid + msg_body)
     static int simple_secure_send_stc (const int fd, const uint8_t header, 
         const client_session& curr_s, msg_buffer& buff,
-        const uint8_t *raw_msg, size_t raw_n) {
+        const uint8_t *raw_msg, const size_t raw_n) {
             
         if (curr_s.get_status() == 0 || curr_s.get_status() == 1) 
             return -1;
+        bool raw_msg_empty = false;
+        size_t raw_bytes = raw_n;
+
+        if (raw_msg == nullptr || raw_n == 0) {
+            raw_msg_empty = true;
+            raw_bytes = 0;
+        }
 
         if ((1 + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
-            raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) 
+            raw_bytes + crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) 
             return -3;
 
         auto aes_key = curr_s.get_aes256gcm_key();
@@ -485,19 +497,13 @@ public:
         std::copy(client_aes_nonce.begin(), client_aes_nonce.end(), 
                     buff.send_buffer.begin() + offset);
         offset += client_aes_nonce.size();
-
-        if ((offset + sid.size() + raw_n + crypto_aead_aes256gcm_ABYTES) > 
-            BUFF_BYTES) {
-            buff.send_bytes = offset;
-            return -3; // buffer overflow occur.
-        }
-
-        // Construct the raw message: sid + cif + msg_body
         std::copy(sid.begin(), sid.end(), buff.send_aes_buffer.begin());
-        std::copy(raw_msg, raw_msg + raw_n, 
+        if (!raw_msg_empty) {
+            std::copy(raw_msg, raw_msg + raw_bytes, 
                     buff.send_aes_buffer.begin() + sid.size());
+        }
         // Record the buffer occupied size.
-        buff.send_aes_bytes = sid.size() + raw_n;
+        buff.send_aes_bytes = sid.size() + raw_bytes;
 
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
@@ -515,6 +521,48 @@ public:
                                    buff.send_bytes);
         if (ret < 0) 
             return -7;
+        return ret;
+    }
+
+    static int simple_sign_send_stc (const int fd, const uint8_t header, 
+        const client_session& curr_s, key_mgr_25519 k, msg_buffer& buff,
+        const uint8_t *raw_msg, const size_t raw_n) {
+        
+        bool raw_msg_empty = false;
+        size_t raw_bytes = raw_n;
+        if (raw_msg == nullptr || raw_n == 0) {
+            raw_msg_empty = true;
+            raw_bytes = 0;
+        }   
+        if (curr_s.get_status() == 0 || curr_s.get_status() == 1) 
+            return -1;
+        if ((1 + crypto_sign_BYTES + CIF_BYTES + raw_bytes) > BUFF_BYTES) 
+            return -3;
+        
+        auto cif = curr_s.get_cinfo_hash();
+        auto cif_bytes = lc_utils::u64_to_bytes(cif);
+        auto sign_sk = k.get_sign_sk();
+
+        size_t offset = 0;
+        unsigned long long sign_len = 0;
+
+        // Padding the first byte
+        buff.send_buffer[0] = header;
+        ++ offset;
+        std::vector<uint8_t> cif_msg(CIF_BYTES + raw_bytes);
+        
+        // Padding the cinfo_hash
+        std::copy(cif_bytes.begin(), cif_bytes.end(), cif_msg.begin());
+        if (!raw_msg_empty) 
+            std::copy(raw_msg, raw_msg + raw_bytes, cif_msg.begin() + CIF_BYTES);
+
+        auto res = crypto_sign(buff.send_buffer.begin() + offset,
+                   &sign_len, cif_msg.data(), cif_msg.size(), sign_sk.data());
+        buff.send_bytes = offset + sign_len;
+        if (res != 0) 
+            return -7;
+        auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), 
+                                   buff.send_bytes);
         return ret;
     }
 
@@ -562,8 +610,8 @@ public:
     }
 
     static void thread_run_core (window_mgr& w, const int fd, msg_buffer& buff, 
-        client_session& s, const curr_user& u,
-        const client_server_pk_mgr& server_pk, 
+        client_session& s, const curr_user& u, lmsg_send_pool& lm_s,
+        lmsg_recv_pool& lm_r, const client_server_pk_mgr& server_pk, 
         const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
         int& core_err) {
               
@@ -581,7 +629,7 @@ public:
         auto aes_beg = buff.recv_aes_buffer.data();
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
-        long_msg lmsg;
+        
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
         std::array<uint8_t, SID_BYTES> recved_sid;
         std::array<uint8_t, CIF_BYTES> recved_cif;
@@ -611,6 +659,12 @@ public:
                 w.wprint_to_output(signed_out_msg);
                 send_gby_req.store(false);
                 return;
+            }
+            // Check the long message receivers / senders.
+            auto now = lc_utils::now_time();
+            if (now - last_lmsg_check.load() >= LMSG_ALIVE_SECS) {
+                lm_r.check_all(now);
+                lm_s.check_all(now);
             }
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
                 buff.recv_raw_buffer.size(), 0, 
@@ -658,14 +712,15 @@ public:
             offset = 0;
             auto header = buff.recv_raw_buffer[0];
             if (header != 0x11 && header != 0x10 && 
-                header != 0x1F && header != 0x22)
+                header != 0x1F && header != 0x13)
                 continue;
-            if (header == 0x11 || header == 0x22) {
+            if (header == 0x11 || header == 0x13) {
                 ++ offset;
                 if (crypto_sign_open(nullptr, &unsign_len, raw_beg + offset,
                     bytes - 1, server_pk.get_server_spk().data()) != 0)
                     continue;
                 offset += crypto_sign_BYTES;
+                // Handle the 0x11 (short messages with signature but not cif)
                 if (header == 0x11) {
                     std::string msg_str(
                         reinterpret_cast<const char *>(raw_beg + offset), 
@@ -673,25 +728,53 @@ public:
                     msg_vec.push_back(msg_str);
                     is_msg_recved = true;
                 }
-                // Handle the user list with header of 0x22
+                // Handle the 0x13 (long messages with signature and cif)
                 else {
+                    if (bytes < 1 + CIF_BYTES + MSG_ID_BYTES + 2)
+                        continue;
                     if (std::memcmp(raw_beg + offset, cif.data(), cif.size()) != 0)
                         continue;
-                    offset += recved_cif.size();
-                    std::vector<uint8_t> chunk(raw_beg + offset, raw_beg + bytes);
-                    auto res = lmsg.receive_chunk(chunk);
-                    if (res < 0)
+                    offset += cif.size();
+                    std::vector<uint8_t> chunk(bytes - offset);
+                    std::copy(raw_beg + offset, raw_beg + bytes, chunk.begin());
+                    auto msg_id = lmsg_receiver::get_chunk_msg_id(chunk);
+                    auto msg_id_bytes = lc_utils::u64_to_bytes(msg_id);
+                    lm_r.add_lmsg(chunk);
+                    auto receiver = lm_r.get_receiver(msg_id);
+                    if (!receiver || receiver->recv_timeout()) {
+                        w.wprint_to_output(lmsg_recv_failed);
                         continue;
-                    if (res == 3) {
-                        std::string ulist;
-                        auto chunks = lmsg.get_recv_chunks();
-                        for (auto it : chunks)
-                            ulist += std::string(
-                                reinterpret_cast<char*>(it.second.data()), 
-                                it.second.size());
-                        w.wprint_user_list(ulist);
                     }
-                    continue;
+                    if (!receiver->recv_done()) {
+                        if (!receiver->last_chunk_received())
+                            continue;
+                        receiver->check_missing_chunks();
+                        if (!receiver->recv_done()) {
+                            auto missed = receiver->missing_chunks_to_bytes();
+                            if (1 + crypto_sign_BYTES + CIF_BYTES + 
+                                missed.size() > BUFF_BYTES)
+                                continue;
+                            simple_sign_send_stc(fd, 0x14, s, client_k, buff, 
+                                reinterpret_cast<uint8_t *>(missed.data()), 
+                                missed.size());
+                            continue;
+                        }
+                    }
+                    // Tell the server of receiving ok.
+                    simple_sign_send_stc(fd, 0x14, s, client_k, buff, 
+                                         msg_id_bytes.data(),
+                                         msg_id_bytes.size());
+                        
+                    receiver->order_recv_chunks();
+                    auto chunks = receiver->get_recv_chunks_ordered();
+                    std::string recved_lmsg_body;
+                    for (auto it : chunks) 
+                        recved_lmsg_body += std::string(
+                            reinterpret_cast<char *>(it.data()), it.size());
+                    msg_vec.push_back(recved_lmsg_body);
+                    // Delete this receiver.
+                    lm_r.delete_receiver(msg_id);
+                    is_msg_recved = true;
                 }
             }
             else if (header == 0x1F) {
@@ -841,9 +924,17 @@ public:
             
         if (curr_s.get_status() == 0 || curr_s.get_status() == 1) 
             return -1;
+        
+        bool raw_msg_empty = false;
+        size_t raw_bytes = raw_n;
+
+        if (raw_msg == nullptr || raw_n == 0) {
+            raw_msg_empty = true;
+            raw_bytes = 0;
+        }
 
         if ((1 + CIF_BYTES + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
-            raw_n + crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) 
+            raw_bytes + crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) 
             return -3;
 
         auto aes_key = curr_s.get_aes256gcm_key();
@@ -869,18 +960,14 @@ public:
                     buffer.send_buffer.begin() + offset);
         offset += client_aes_nonce.size();
 
-        if ((offset + sid.size() + raw_n + crypto_aead_aes256gcm_ABYTES) > 
-            BUFF_BYTES) {
-            buffer.send_bytes = offset;
-            return -3; // buffer overflow occur.
-        }
-
         // Construct the raw message: sid + cif + msg_body
         std::copy(sid.begin(), sid.end(), buffer.send_aes_buffer.begin());
-        std::copy(raw_msg, raw_msg + raw_n, 
+        if (!raw_msg_empty) {
+            std::copy(raw_msg, raw_msg + raw_bytes, 
                     buffer.send_aes_buffer.begin() + sid.size());
+        }
         // Record the buffer occupied size.
-        buffer.send_aes_bytes = sid.size() + raw_n;
+        buffer.send_aes_bytes = sid.size() + raw_bytes;
 
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
@@ -1427,6 +1514,7 @@ public:
         heartbeating.store(true);
         auto_signout.store(false);
         heartbeat_timeout.store(false);
+        last_lmsg_check.store(lc_utils::now_time());
 
         auto ret = winmgr.init();
         if (ret != W_NORMAL_RETURN) {
@@ -1439,7 +1527,8 @@ public:
         // Start the core thread.
         int core_err = 0;
         std::thread core(std::bind(thread_run_core, winmgr, client_fd, buffer, 
-            session, user, server_pk_mgr, client_key, messages, core_err));
+            session, user, lmsg_sends, lmsg_recvs, server_pk_mgr, client_key, 
+            messages, core_err));
         
         auto input_ret = winmgr.winput();
         if (heartbeat_timeout) 

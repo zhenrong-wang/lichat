@@ -43,9 +43,10 @@
  * ----------
  * 0x1F: signed heartbeat / goodbye message
  * ----------
- * 0x20: encrypted long message between server and client
- * 0x21: signed broadcasting long message from server to all clients
- * 0x22: signed long message from server to a specific client (currently for user list)
+ * 0x13: signed long message send / recv
+ * 0x14: signed long message recv retry request
+ * 0x15: encrypted long message send / recv
+ * 0x16: encrypted long message recv retry request
  * ----------
  */
 
@@ -764,7 +765,8 @@ class lichat_server {
     user_mgr users;                                 // all users
     session_pool conns;                             // all sessions.
     ctx_pool clients;                               // all clients(contexts).
-    long_msg lmsg;                                  // manage long messages.
+    lmsg_send_pool lmsg_sends;                      // send long messages.
+    lmsg_recv_pool lmsg_recvs;                      // receive long messages
     int last_error;                                 // error code
     
 public:
@@ -885,6 +887,13 @@ public:
         // Padding the first byte
         buffer.send_buffer[0] = header;
         ++ offset;
+
+        bool raw_msg_empty = false;
+        size_t raw_bytes = raw_n;
+        if (raw_msg == nullptr || raw_n == 0) {
+            raw_msg_empty = true;
+            raw_bytes = 0;
+        }
         
         if (header == 0x00) {
             // server_sign_key + signed(server_publick_key)
@@ -923,7 +932,7 @@ public:
         std::copy(server_aes_nonce.begin(), server_aes_nonce.end(), 
                     buffer.send_buffer.begin() + offset);
         offset += server_aes_nonce.size();
-        if ((offset + sid.size() + cif_bytes.size() + raw_n + 
+        if ((offset + sid.size() + cif_bytes.size() + raw_bytes + 
             crypto_aead_aes256gcm_ABYTES) > BUFF_BYTES) {
 
             buffer.send_bytes = offset;
@@ -933,11 +942,12 @@ public:
         std::copy(sid.begin(), sid.end(), buffer.send_aes_buffer.begin());
         std::copy(cif_bytes.begin(), cif_bytes.end(), 
                     buffer.send_aes_buffer.begin() + sid.size());
-        if (raw_msg != nullptr && raw_n > 0) {
-            std::copy(raw_msg, raw_msg + raw_n, buffer.send_aes_buffer.begin() + 
-                      sid.size() + cif_bytes.size());
+        if (!raw_msg_empty) {
+            std::copy(raw_msg, raw_msg + raw_bytes, 
+                      buffer.send_aes_buffer.begin() + sid.size() + 
+                      cif_bytes.size());
             // Record the buffer occupied size.
-            buffer.send_aes_bytes = sid.size() + cif_bytes.size() + raw_n;
+            buffer.send_aes_bytes = sid.size() + cif_bytes.size() + raw_bytes;
         }
         else {
             buffer.send_aes_bytes = sid.size() + cif_bytes.size();
@@ -962,10 +972,12 @@ public:
         const uint8_t *raw_msg, size_t raw_n) {
         
         bool raw_msg_empty = false;
-        if (raw_msg == nullptr || raw_n == 0)
+        size_t raw_bytes = raw_n;
+        if (raw_msg == nullptr || raw_n == 0) {
             raw_msg_empty = true;
-
-        size_t offset = 0, aes_encrypted_len = 0;
+            raw_bytes = 0;
+        }
+        size_t offset = 0;
         auto conn = conns.get_session(cif);
         if (conn == nullptr)
             return -1;
@@ -974,17 +986,15 @@ public:
         // Padding the first byte
         buffer.send_buffer[0] = header;
         ++ offset;
-        if (!raw_msg_empty) {
-            if (offset + crypto_sign_BYTES + raw_n > BUFF_BYTES) {
-                buffer.send_bytes = offset;
-                return -5;
-            }
+        if (offset + crypto_sign_BYTES + raw_bytes > BUFF_BYTES) {
+            buffer.send_bytes = offset;
+            return -5;
         }
-        size_t cif_msg_size = cif_bytes.size() + ((raw_msg_empty) ? 0 : raw_n);
+        size_t cif_msg_size = cif_bytes.size() + ((raw_msg_empty) ? 0 : raw_bytes);
         std::vector<uint8_t> cif_msg(cif_msg_size);
         std::copy(cif_bytes.begin(), cif_bytes.end(), cif_msg.begin());
         if (!raw_msg_empty)
-            std::copy(raw_msg, raw_msg + raw_n, cif_msg.begin() + cif_bytes.size());
+            std::copy(raw_msg, raw_msg + raw_bytes, cif_msg.begin() + cif_bytes.size());
         auto sign_sk = key_mgr.get_sign_sk();
         unsigned long long sign_len = 0;
 
@@ -1224,16 +1234,19 @@ public:
     // The user list is not encrypted for now. Thinking about whether it should
     // be encrypted. Currently it is just signed.
     bool send_user_list (const uint64_t& cif) {
-        auto ulist_str = users.user_list_to_str(true);
+        auto timestamp = lc_utils::now_time_to_str();
+        auto ulist_str = timestamp + ",[SYSTEM_USERS]," + 
+                         users.user_list_to_str(true);
         std::vector<uint8_t> ulist_vec(ulist_str.data(), 
                                        ulist_str.data() + ulist_str.size());
-
-        if(!lmsg.prepare_chunks_to_send(ulist_vec))
+        lmsg_sender new_sender;
+        if(!new_sender.prepare_chunks_to_send(ulist_vec))
             return false;
+        lmsg_sends.add_sender(new_sender);
         auto sign_sk = key_mgr.get_sign_sk();
         bool lmsg_send_flag = true;
-        for (auto it : lmsg.get_send_chunks()) {
-            auto res = simple_sign_send(0x22, cif, it.data(), it.size());
+        for (auto it : new_sender.get_send_chunks()) {
+            auto res = simple_sign_send(0x13, cif, it.data(), it.size());
             if (res < 0) 
                 return false;
         }
@@ -1264,15 +1277,22 @@ public:
         size_t aes_enc_len = 0;
         size_t aes_dec_len = 0;
         std::string timestamp;
-        time_t check_t = lc_utils::now_time();
+        time_t conn_check_t = lc_utils::now_time();
+        time_t lmsg_check_t = lc_utils::now_time();
         while (true) {
             // Server checks all connections
             auto now = lc_utils::now_time();
-            if (now - check_t >= SERVER_CONNS_CHECK_SECS) {
+            if (now - conn_check_t >= SERVER_CONNS_CHECK_SECS) {
                 std::cout << "Checking all connections ..." << std::endl;
                 auto erased = check_all_conns(now);
-                check_t = now;
+                conn_check_t = now;
                 std::cout << "Erased " << erased << " inactive." << std::endl;
+            }
+            if (now - lmsg_check_t >= LMSG_ALIVE_SECS) {
+                std::cout << "Checking all long messages ..." << std::endl;
+                lmsg_sends.check_all(now);
+                lmsg_recvs.check_all(now);
+                lmsg_check_t = now;
             }
             struct sockaddr_in client_addr;
             auto addr_len = sizeof(client_addr);
@@ -1471,19 +1491,24 @@ public:
                 conns.delete_session(cinfo_hash); 
                 continue;
             }
+            // header + sign + cif + msg_body
             // 1. Heartbeat message, needs to beat back.
             //    0x1F + signed(CIF)
             // 2. Goodbye message, delete the connection and context.
             //    0x1F + signed(CIF + '!')
-            if (header == 0x1F) {
+            // 3. Signed long message 0x13
+            // 4. Signed long message response 0x14
+            if (header == 0x1F || header == 0x13 || header == 0x14) {
                 if (buffer.recv_raw_bytes != HEARTBEAT_BYTES &&
-                    buffer.recv_raw_bytes != GOODBYE_BYTES)
+                    buffer.recv_raw_bytes != GOODBYE_BYTES && 
+                    buffer.recv_raw_bytes < LMSG_BYTES_MIN)
                     continue;
                 std::array<uint8_t, CIF_BYTES> recved_cif_bytes;
                 auto beg = buffer.recv_raw_buffer.begin();
-                auto cif_pos = beg + 1 + crypto_sign_BYTES;
-                std::copy(cif_pos, cif_pos + CIF_BYTES, 
+                offset = 1 + crypto_sign_BYTES;
+                std::copy(beg + offset, beg + offset + CIF_BYTES, 
                           recved_cif_bytes.begin());
+                offset += CIF_BYTES;
                 auto recved_cif = lc_utils::bytes_to_u64(recved_cif_bytes);
                 auto ptr_session = conns.get_session(recved_cif);
                 if (ptr_session == nullptr)
@@ -1492,39 +1517,76 @@ public:
                 if (crypto_sign_open(nullptr, &unsign_len, beg + 1,
                     buffer.recv_raw_bytes - 1, client_spk.data()))
                     continue;  // Not a valid signature.
+                if (header == 0x1F) {
+                    if (buffer.recv_raw_bytes == HEARTBEAT_BYTES) {
+                        // All the checks done, update the addr.
+                        ptr_session->set_src_addr(client_addr);
+                        ptr_session->set_last_heartbeat(lc_utils::now_time());
+                        auto res = simple_sign_send(0x1F, recved_cif, nullptr, 0);
+                        if (res == -7) 
+                            return close_server(MSG_SIGNING_FAILED);
+                        continue;
+                    }
+                    if (buffer.recv_raw_bytes == GOODBYE_BYTES) {
+                        auto last_byte = buffer.recv_raw_buffer[buffer.recv_raw_bytes - 1];
+                        // Now if the last byte is '!', it is a goodbye packet.
+                        if (last_byte != '!')
+                            continue; // Not a valid packet.
 
-                if (buffer.recv_raw_bytes == HEARTBEAT_BYTES) {
-                    // All the checks done, update the addr.
-                    ptr_session->set_src_addr(client_addr);
-                    ptr_session->set_last_heartbeat(lc_utils::now_time());
-                    auto res = simple_sign_send(0x1F, recved_cif, nullptr, 0);
-                    if (res == -7) 
-                        return close_server(MSG_SIGNING_FAILED);
+                        auto uemail = clients.get_ctx(recved_cif)->get_bind_uid();
+                        auto uname = users.get_uname_by_uemail(uemail);
+                        // Delete all the context info.
+                        clients.delete_ctx(recved_cif);
+                        // Delete all the session data.
+                        conns.delete_session(recved_cif);
+
+                        // User signed off.
+                        users.unbind_user_ctx(0, uemail);
+                        
+                        timestamp = lc_utils::now_time_to_str();
+                        std::string bcast_msg = 
+                            timestamp + ",[SYSTEM_BCAST]," + (*uname) + " signed out!";
+                        //std::cout << bcast_msg << std::endl;
+                        // Broadcasting to all active users.      
+                        broadcasting(
+                            reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
+                            bcast_msg.size());
+                        continue;
+                    }
                     continue;
                 }
-                auto last_byte = buffer.recv_raw_buffer[buffer.recv_raw_bytes - 1];
-                // Now if the last byte is '!', it is a goodbye packet.
-                if (last_byte != '!')
-                    continue; // Not a valid packet.
+                if (buffer.recv_raw_bytes < LMSG_BYTES_MIN)
+                    continue;
+                if (header == 0x13) {
+                    
+                    // To-Do: receive long messages.
+                    continue;
+                }
 
-                auto uemail = clients.get_ctx(recved_cif)->get_bind_uid();
-                auto uname = users.get_uname_by_uemail(uemail);
-                // Delete all the context info.
-                clients.delete_ctx(recved_cif);
-                // Delete all the session data.
-                conns.delete_session(recved_cif);
+                // Long message responds.
+                std::array<uint8_t, MSG_ID_BYTES> lmsg_id_bytes;
+                std::copy(beg + offset, beg + offset + MSG_ID_BYTES,
+                          lmsg_id_bytes.begin());
+                offset += MSG_ID_BYTES;
+                auto lmsg_id = lc_utils::bytes_to_u64(lmsg_id_bytes);
 
-                // User signed off.
-                users.unbind_user_ctx(0, uemail);
-                
-                timestamp = lc_utils::now_time_to_str();
-                std::string bcast_msg = 
-                    timestamp + ",[SYSTEM_BCAST]," + (*uname) + " signed out!";
-                //std::cout << bcast_msg << std::endl;
-                // Broadcasting to all active users.      
-                broadcasting(
-                    reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
-                    bcast_msg.size());
+                // Receiver reports OK, delete the sender.
+                if (buffer.recv_raw_bytes == LMSG_BYTES_MIN) {
+                    lmsg_sends.delete_sender(lmsg_id);
+                    continue;
+                }
+                // Resend the missing chunks.
+                auto ptr_sender = lmsg_sends.get_sender(lmsg_id);
+                if (ptr_sender == nullptr) 
+                    continue;   // The sender already deleted (probably timeout).
+                std::vector<uint8_t> missed = std::vector<uint8_t>(beg + offset,
+                    beg + buffer.recv_raw_bytes);
+                auto missed_chunks = lc_utils::u8vec_to_u16(missed);
+                for (auto it : missed_chunks) {
+                    simple_sign_send(0x13, recved_cif, 
+                                     ptr_sender->get_send_chunks()[it].data(),
+                                     ptr_sender->get_send_chunks()[it].size());
+                }
                 continue;
             }
             if (header == 0x10) {

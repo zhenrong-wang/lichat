@@ -89,6 +89,9 @@ constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
 // Server receive wait
 constexpr size_t SERVER_RECV_WAIT_SECS = 10;
 
+
+constexpr size_t LMSG_KEY_TRASH_SIZE = 65536;
+
 // Server user_db header
 const std::string user_db_header = "UEMAIL,UNAME,PASSHASH\n";
 
