@@ -380,6 +380,7 @@ class lichat_client {
     lmsg_recv_pool lmsg_recvs;
     curr_user user;
     window_mgr winmgr;
+    size_t heartbeat_interval_secs;
     int last_error;
 
 public:
@@ -389,6 +390,7 @@ public:
         key_dir(default_key_dir), session(client_session()), 
         client_key(key_mgr_25519(key_dir, "client_")), buffer(msg_buffer()), 
         user(curr_user()), winmgr(window_mgr()),
+        heartbeat_interval_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS), 
         last_error(0) {
 
         server_port = DEFAULT_SERVER_PORT;
@@ -397,6 +399,12 @@ public:
         server_addr.sin_port = htons(server_port);
         // Store the initial addr to session.
         session.update_src_addr(server_addr);
+    }
+
+    // The heartbeat interval should be 0 ~ (timeout / 3)
+    void set_heartbeat (const size_t interval_secs) {
+        if (interval_secs < HEARTBEAT_TIMEOUT_SECS / 3 && interval_secs > 0) 
+            heartbeat_interval_secs = interval_secs;
     }
 
     bool set_server_addr (std::string& addr_str, std::string& port_str) {
@@ -599,14 +607,14 @@ public:
         return true;
     }
 
-    static void thread_heartbeat () {
+    static void thread_heartbeat (const size_t interval_secs) {
         while (heartbeating) {
             auto now = lc_utils::now_time();
             if (now - last_heartbeat_recv >= HEARTBEAT_TIMEOUT_SECS) {
                 heartbeat_timeout.store(true);
                 return;
             }
-            if ((now - last_heartbeat_sent) >= HEARTBEAT_INTERVAL_SECS) 
+            if ((now - last_heartbeat_sent) >= interval_secs) 
                 heartbeat_req.store(true);
             std::this_thread::sleep_for(
                 std::chrono::milliseconds(HEARTBEAT_THREAD_SLEEP_MS));
@@ -1557,7 +1565,7 @@ public:
         }
         winmgr.set();
         // Start the heartbeat thread.
-        std::thread heartbeat(thread_heartbeat);
+        std::thread heartbeat(thread_heartbeat, heartbeat_interval_secs);
         // Start the core thread.
         int core_err = 0;
         std::thread core(std::bind(thread_run_core, winmgr, client_fd, buffer, 
