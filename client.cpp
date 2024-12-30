@@ -186,17 +186,24 @@ public:
         return false;
     }
 
-    void clear_server_pk (void) {
+    bool clear_stored_pk (void) {
         std::string server_spk_file = server_pk_dir + 
                                         "/client_server_sign.pub";
         std::string server_cpk_file = server_pk_dir + 
                                         "/client_server_crypto.pub";
         std::ofstream out_spk(server_spk_file, std::ios::binary);
         std::ofstream out_cpk(server_cpk_file, std::ios::binary);
-        out_spk.write(nullptr, 0);
-        out_cpk.write(nullptr, 0);
+        if (!out_spk.is_open() || !out_cpk.is_open()) {
+            if (out_spk.is_open()) out_spk.close();
+            if (out_cpk.is_open()) out_cpk.close();
+            return false;
+        }
+        std::string inval("inval");
+        out_spk.write(inval.c_str(), inval.size());
+        out_cpk.write(inval.c_str(), inval.size());
         out_spk.close();
         out_cpk.close();
+        return true;
     }
 
     bool update_server_pk (
@@ -1238,9 +1245,11 @@ public:
                         if (crypto_sign_open(nullptr, &unsign_len, beg + offset, 
                             crypto_sign_BYTES + sizeof(ok), 
                             server_pk_mgr.get_server_spk().data()) != 0) {
-                            
-                            server_pk_mgr.clear_server_pk();
+                            if (!server_pk_mgr.clear_stored_pk()) 
+                                return close_client(SERVER_PK_MGR_ERROR);
                             session.reset();
+                            std::cout << "[WARN] Previous server public keys cleared." 
+                                      << std::endl;
                             continue;
                         }
                         offset += crypto_sign_BYTES + sizeof(ok);
