@@ -1,0 +1,46 @@
+name: "Windows | MSVC++ | x64 | Release "
+
+on:
+  push:
+    branches: [ "feature/cross-platform-and-dependencies" ]
+    paths:
+      - ./*.cpp
+      - ./*.hpp
+      - .github/workflows/build_and_test_windows_msvc_x64_release.yml
+      - CMakeLists.txt
+  pull_request:
+    branches: [ "feature/cross-platform-and-dependencies" ]
+    paths:
+      - ./*.cpp
+      - ./*.hpp
+      - .github/workflows/build_and_test_windows_msvc_x64_release.yml
+      - CMakeLists.txt
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: turtlebrowser/get-conan@v1.2
+        with:
+          version: 2.11.0
+      
+      - name: Resolve dependencies
+        run: |
+          conan profile new default --detect
+          conan install . -s build_type=${{env.BUILD_TYPE}} --install-folder=${{github.workspace}}/build/msvc/x64/release --build=missing
+
+      - name: Configure
+        run: cmake -B ${{github.workspace}}/build/msvc/x64/release -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+      - name: Build
+        run: cmake --build ${{github.workspace}}/build/msvc/x64/release --config ${{env.BUILD_TYPE}}
+
+      - name: Test
+        working-directory: ${{github.workspace}}\build\msvc\x64\release\test\${{env.BUILD_TYPE}}
+        shell: cmd
+        run: ${{github.workspace}}\build\msvc\x64\release\test\${{env.BUILD_TYPE}}\fooTest.exe

@@ -1,0 +1,48 @@
+name: "Ubuntu | GCC 12 | x64 | Release "
+
+on:
+  push:
+    branches: [ "feature/cross-platform-and-dependencies" ]
+    paths:
+      - ./*.cpp
+      - ./*.hpp
+      - .github/workflows/build_and_test_ubuntu_gcc14_x64_release.yml
+      - CMakeLists.txt
+  pull_request:
+    branches: [ "feature/cross-platform-and-dependencies" ]
+    paths:
+      - ./*.cpp
+      - ./*.hpp
+      - .github/workflows/build_and_test_ubuntu_gcc14_x64_release.yml
+      - CMakeLists.txt
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: turtlebrowser/get-conan@v1.2
+        with:
+          version: 2.11.0
+
+      - name: Install GCC14
+        shell: bash
+        run:  |
+          sudo apt update
+          sudo apt install gcc-14 g++-14
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 120 --slave /usr/bin/g++ g++ /usr/bin/g++-14 --slave /usr/bin/gcov gcov /usr/bin/gcov-14
+          
+      - name: Resolve dependencies
+        run: |
+          conan profile new default --detect
+          conan install . -s build_type=${{env.BUILD_TYPE}} -s compiler.libcxx=libstdc++11 --install-folder=${{github.workspace}}/build/gcc/x64/release --build=missing
+
+      - name: Configure
+        run: cmake -B ${{github.workspace}}/build/gcc/x64/release -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+      - name: Build
+        run: cmake --build ${{github.workspace}}/build/gcc/x64/release --config ${{env.BUILD_TYPE}} --target all
