@@ -741,15 +741,18 @@ public:
                     auto msg_id_bytes = lc_utils::u64_to_bytes(msg_id);
                     lm_r.add_lmsg(chunk);
                     auto receiver = lm_r.get_receiver(msg_id);
-                    if (!receiver || receiver->recv_timeout()) {
+                    if (!receiver) {
+                        w.wprint_to_output(lmsg_recv_failed);
+                        continue;
+                    }
+                    if (receiver->recv_timeout()) {
                         w.wprint_to_output(lmsg_recv_failed);
                         continue;
                     }
                     if (!receiver->recv_done()) {
                         if (!receiver->last_chunk_received())
                             continue;
-                        if (!receiver->checkpoint_passed()) 
-                            continue;
+                        
                         receiver->check_missing_chunks();
                         if (!receiver->recv_done()) {
                             auto missed = receiver->missing_chunks_to_bytes();
