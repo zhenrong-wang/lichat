@@ -1380,18 +1380,18 @@ public:
                     simple_secure_send(0x01, cinfo_hash, ok, sizeof(ok));
                 continue;
             }
-            if (header == 0xFF || header == 0xEF || header == 0xDF) {
+            if (header == 0xFF || header == 0xFE || header == 0xFD) {
                 uint64_t cinfo_hash;
                 if (header == 0xFF) {
                     if (!is_valid_clnt_err_msg(client_ff_timout, cinfo_hash))
                     continue;
                 }
-                else if (header == 0xEF) {
-                    if (!is_valid_clnt_err_msg(client_ef_keyerr, cinfo_hash))
+                else if (header == 0xFE) {
+                    if (!is_valid_clnt_err_msg(client_fe_keyerr, cinfo_hash))
                     continue;
                 }
                 else {
-                    if (!is_valid_clnt_err_msg(client_df_msgerr, cinfo_hash))
+                    if (!is_valid_clnt_err_msg(client_fd_msgerr, cinfo_hash))
                     continue;
                 }
                 if (conns.get_session(cinfo_hash)->get_status() != 1)
@@ -1451,16 +1451,16 @@ public:
                 auto beg = buffer.send_buffer.begin();
                 // 1 + 6-byte err + CIF + deleted_sid + server_sign_pk + signed(server_cpk)
                 if (!is_aes_ok) 
-                    std::copy(std::begin(server_ef_keyerr), 
-                                std::end(server_ef_keyerr), beg + offset);
+                    std::copy(std::begin(server_fe_keyerr), 
+                                std::end(server_fe_keyerr), beg + offset);
                 else
-                    std::copy(std::begin(server_df_msgerr), 
-                                std::end(server_df_msgerr), beg + offset);
+                    std::copy(std::begin(server_fd_msgerr), 
+                                std::end(server_fd_msgerr), beg + offset);
                 offset += 1 + ERR_CODE_BYTES;
 
                 // Copy cinfo_hash
                 std::copy(cinfo_hash_bytes.begin(), cinfo_hash_bytes.end(),  
-                            beg + offset);
+                          beg + offset);
                 offset += cinfo_hash_bytes.size();
 
                 // Copy server_sid

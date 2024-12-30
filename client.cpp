@@ -1277,16 +1277,16 @@ public:
                     }
                     offset = 0;
                     if (!is_aes_ok) {
-                        buffer.send_buffer[0] = 0xEF;
-                        std::copy(std::begin(client_ef_keyerr), 
-                                    std::end(client_ef_keyerr), 
-                                    buffer.send_buffer.begin() + 1);
+                        buffer.send_buffer[0] = 0xFE;
+                        std::copy(std::begin(client_fe_keyerr), 
+                                  std::end(client_fe_keyerr), 
+                                  buffer.send_buffer.begin() + 1);
                     }
                     else {
-                        buffer.send_buffer[0] = 0xDF;
-                        std::copy(std::begin(client_df_msgerr), 
-                                    std::end(client_df_msgerr), 
-                                    buffer.send_buffer.begin() + 1);
+                        buffer.send_buffer[0] = 0xFD;
+                        std::copy(std::begin(client_fd_msgerr), 
+                                  std::end(client_fd_msgerr), 
+                                  buffer.send_buffer.begin() + 1);
                     }
                     offset += (1 + ERR_CODE_BYTES);
                     auto client_spk = client_key.get_sign_pk();
@@ -1299,7 +1299,7 @@ public:
                         return close_client(MSG_SIGNING_FAILED);
 
                     std::copy(signed_cid_cpk.begin(), signed_cid_cpk.end(), 
-                                buffer.send_buffer.begin() + offset);
+                              buffer.send_buffer.begin() + offset);
                     buffer.send_bytes = offset + signed_cid_cpk.size();
                     simple_send(session, buffer.send_buffer.data(), 
                                 buffer.send_bytes);
@@ -1318,10 +1318,10 @@ public:
                                                crypto_box_PUBLICKEYBYTES;
 
                     if (buffer.recv_raw_bytes == expected_err_size) {
-                        if (std::memcmp(beg, server_ef_keyerr, 
-                            sizeof(server_ef_keyerr) == 0) || 
-                            std::memcmp(beg, server_df_msgerr, 
-                            sizeof(server_df_msgerr) == 0)) {
+                        if (std::memcmp(beg, server_fe_keyerr, 
+                            sizeof(server_fe_keyerr) == 0) || 
+                            std::memcmp(beg, server_fd_msgerr, 
+                            sizeof(server_fd_msgerr) == 0)) {
 
                             offset += 1 + ERR_CODE_BYTES;
                             std::copy(beg + offset, beg + offset + CIF_BYTES, 
@@ -1351,7 +1351,9 @@ public:
                                 session.reset();
                                 continue;
                             }
+                            continue;
                         }
+                        continue;
                     }
                     offset = 0;
                     if (header != 0x02) 
