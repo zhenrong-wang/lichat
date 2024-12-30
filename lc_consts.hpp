@@ -51,18 +51,18 @@ constexpr size_t CLIENT_RECV_MIN_BYTES = 1 + ERR_CODE_BYTES;
 
 constexpr uint8_t server_ff_failed[ERR_CODE_BYTES + 1] = 
     {0xFF, 'F', 'A', 'I', 'L', 'E', 'D'};
-constexpr uint8_t server_ef_keyerr[ERR_CODE_BYTES + 1] = 
-    {0xEF, 'K', 'E', 'Y', 'E', 'R', 'R'};
-constexpr uint8_t server_df_msgerr[ERR_CODE_BYTES + 1] = 
-    {0xDF, 'M', 'S', 'G', 'E', 'R', 'R'};
-constexpr uint8_t server_cf_siderr[ERR_CODE_BYTES + 1] = 
-    {0xCF, 'S', 'I', 'D', 'E', 'R', 'R'};
+constexpr uint8_t server_fe_keyerr[ERR_CODE_BYTES + 1] = 
+    {0xFE, 'K', 'E', 'Y', 'E', 'R', 'R'};
+constexpr uint8_t server_fd_msgerr[ERR_CODE_BYTES + 1] = 
+    {0xFD, 'M', 'S', 'G', 'E', 'R', 'R'};
+constexpr uint8_t server_fc_siderr[ERR_CODE_BYTES + 1] = 
+    {0xFC, 'S', 'I', 'D', 'E', 'R', 'R'};
 
 constexpr uint8_t client_ff_timout[ERR_CODE_BYTES] = 
     {'T', 'I', 'M', 'O', 'U', 'T'};
-constexpr uint8_t client_ef_keyerr[ERR_CODE_BYTES] = 
+constexpr uint8_t client_fe_keyerr[ERR_CODE_BYTES] = 
     {'K', 'E', 'Y', 'E', 'R', 'R'};
-constexpr uint8_t client_df_msgerr[ERR_CODE_BYTES] = 
+constexpr uint8_t client_fd_msgerr[ERR_CODE_BYTES] = 
     {'M', 'S', 'G', 'E', 'R', 'R'};
 
 // The default key dir
