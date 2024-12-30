@@ -23,16 +23,13 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
-      - uses: turtlebrowser/get-conan@v1.2
-        with:
-          version: 2.11.0
+      - uses: lukka/run-vcpkg@v11.5
       
       - name: Resolve dependencies
         run: |
-          conan profile new default --detect
-          conan install . -s build_type=${{env.BUILD_TYPE}} --install-folder=${{github.workspace}}/build/msvc/x64/release --build=missing
+          vcpkg install
 
       - name: Configure
         run: cmake -B ${{github.workspace}}/build/msvc/x64/release -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}

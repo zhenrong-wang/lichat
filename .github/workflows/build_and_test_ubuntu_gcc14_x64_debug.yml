@@ -24,10 +24,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: turtlebrowser/get-conan@v1.2
-        with:
-          version: 2.11.0
+      - uses: actions/checkout@v4
+      - uses: lukka/run-vcpkg@v11.5
 
       - name: Install GCC14
         shell: bash
@@ -38,8 +36,7 @@ jobs:
           
       - name: Resolve dependencies
         run: |
-          conan profile new default --detect
-          conan install . -s build_type=${{env.BUILD_TYPE}} -s compiler.libcxx=libstdc++11 --install-folder=${{github.workspace}}/build/gcc/x64/debug --build=missing
+          vcpkg install
 
       - name: Configure
         run: cmake -B ${{github.workspace}}/build/gcc/x64/debug -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
