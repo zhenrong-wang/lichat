@@ -32,7 +32,6 @@ constexpr size_t LMSG_BYTES_MIN = 1 + crypto_sign_BYTES + CIF_BYTES + MSG_ID_BYT
 // would need efforts at both server side and client side.
 // To make it simple for now, we set the time window to 10.
 constexpr size_t LMSG_ALIVE_SECS = 60;
-constexpr size_t LMSG_CHECKPOINT = LMSG_ALIVE_SECS / 2;
 
 /**
  * MASK_TO_SIZE:
@@ -156,10 +155,6 @@ public:
 
     bool recv_timeout () {
         return status == 3;
-    }
-
-    bool checkpoint_passed () {
-        return (lc_utils::now_time() - recv_start_time) >= LMSG_CHECKPOINT;
     }
 
     static uint64_t get_chunk_msg_id (const std::vector<uint8_t>& chunk) {
