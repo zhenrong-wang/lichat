@@ -1452,10 +1452,10 @@ public:
                 // 1 + 6-byte err + CIF + deleted_sid + server_sign_pk + signed(server_cpk)
                 if (!is_aes_ok) 
                     std::copy(std::begin(server_fe_keyerr), 
-                                std::end(server_fe_keyerr), beg + offset);
+                              std::end(server_fe_keyerr), beg + offset);
                 else
                     std::copy(std::begin(server_fd_msgerr), 
-                                std::end(server_fd_msgerr), beg + offset);
+                              std::end(server_fd_msgerr), beg + offset);
                 offset += 1 + ERR_CODE_BYTES;
 
                 // Copy cinfo_hash
@@ -1478,7 +1478,7 @@ public:
 
                 lc_utils::sign_crypto_pk(key_mgr, signed_server_cpk);
                 std::copy(signed_server_cpk.begin(), signed_server_cpk.end(), 
-                            beg + offset);
+                          beg + offset);
                 
                 // Calc the total bytes.
                 buffer.send_bytes = offset + signed_server_cpk.size();
