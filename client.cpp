@@ -186,6 +186,19 @@ public:
         return false;
     }
 
+    void clear_server_pk (void) {
+        std::string server_spk_file = server_pk_dir + 
+                                        "/client_server_sign.pub";
+        std::string server_cpk_file = server_pk_dir + 
+                                        "/client_server_crypto.pub";
+        std::ofstream out_spk(server_spk_file, std::ios::binary);
+        std::ofstream out_cpk(server_cpk_file, std::ios::binary);
+        out_spk.write(nullptr, 0);
+        out_cpk.write(nullptr, 0);
+        out_spk.close();
+        out_cpk.close();
+    }
+
     bool update_server_pk (
         const std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& recved_spk, 
         const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& recved_cpk) {
@@ -1152,6 +1165,9 @@ public:
             if (status == 1 || status == 2 || status == 4) {
                 // Here the socket is blocking mode for reliability.
                 auto wait_res = wait_server_response(msg_addr);
+                /*if (wait_res > 0) {
+                    lc_utils::print_array(buffer.recv_raw_buffer.data(), wait_res);
+                }*/
                 if (wait_res == -127) {
                     std::cout << "Failed to set socket option." << std::endl;
                     return close_client(SOCK_SETOPT_FAILED);
@@ -1217,24 +1233,27 @@ public:
                                               SID_BYTES + CIF_BYTES + 
                                               sizeof(ok) + 
                                               crypto_aead_aes256gcm_ABYTES;
-                        if (buffer.recv_raw_bytes != expected_len)
+                        if (buffer.recv_raw_bytes != expected_len) 
                             continue;
                         if (crypto_sign_open(nullptr, &unsign_len, beg + offset, 
                             crypto_sign_BYTES + sizeof(ok), 
-                            server_pk_mgr.get_server_spk().data()) != 0) 
+                            server_pk_mgr.get_server_spk().data()) != 0) {
+                            
+                            server_pk_mgr.clear_server_pk();
+                            session.reset();
                             continue;
-                        
+                        }
                         offset += crypto_sign_BYTES + sizeof(ok);
                     }
                     std::copy(beg + offset, 
-                                beg + offset + crypto_aead_aes256gcm_NPUBBYTES, 
-                                server_aes_nonce.begin());
+                              beg + offset + crypto_aead_aes256gcm_NPUBBYTES, 
+                              server_aes_nonce.begin());
 
                     offset += crypto_aead_aes256gcm_NPUBBYTES;
 
                     if (lc_utils::calc_aes_key(aes_key, 
-                            server_pk_mgr.get_server_cpk(), 
-                            client_key.get_crypto_sk()) != 0)
+                        server_pk_mgr.get_server_cpk(), 
+                        client_key.get_crypto_sk()) != 0)
                         continue;
                     
                     auto is_aes_ok = 
@@ -1258,17 +1277,16 @@ public:
                     if (is_aes_ok && is_msg_ok) {
                         session.update_src_addr(msg_addr);
                         std::copy(aes_beg, aes_beg + SID_BYTES, 
-                                    recved_server_sid.begin());
+                                  recved_server_sid.begin());
                         std::copy(aes_beg + SID_BYTES, 
-                                    aes_beg + SID_BYTES + CIF_BYTES, 
-                                    recved_cif_bytes.begin());
+                                  aes_beg + SID_BYTES + CIF_BYTES, 
+                                  recved_cif_bytes.begin());
 
                         auto ret = session.prepare(server_pk_mgr, client_key, 
                                         recved_server_sid, recved_cif_bytes);
                         if (ret == 0) {
                             simple_secure_send(0x02, session, ok, sizeof(ok));
-                            std::cout << "Secure session prepared OK!\t" 
-                                      << session.get_status() << std::endl;
+                            std::cout << "Secure session prepared OK!" << std::endl;
                             continue;
                         }
                         else if (ret < 0) 
@@ -1291,7 +1309,7 @@ public:
                     offset += (1 + ERR_CODE_BYTES);
                     auto client_spk = client_key.get_sign_pk();
                     std::copy(client_spk.begin(), client_spk.end(), 
-                                buffer.send_buffer.begin() + offset);
+                              buffer.send_buffer.begin() + offset);
                     offset += client_spk.size();
                     std::array<uint8_t, crypto_sign_BYTES + CID_BYTES + 
                                 crypto_box_PUBLICKEYBYTES> signed_cid_cpk;
@@ -1393,8 +1411,7 @@ public:
 
                     session.update_src_addr(msg_addr);
                     session.activate(); // status already is confirmed as 2, so activate would always be true.
-                    std::cout << "Secure session activated OK!\t" 
-                              << session.get_status() << std::endl;
+                    std::cout << "Secure session activated OK!" << std::endl;
                     continue; 
                 }
                 // Now status == 4
