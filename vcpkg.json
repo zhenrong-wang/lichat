@@ -6,7 +6,8 @@
       "name": "libsodium"
     },
     {
-      "name": "icu"
+      "name": "icu",
+      "platform": "windows"
     }
   ]
 }
