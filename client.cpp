@@ -748,12 +748,15 @@ public:
                     if (!receiver->recv_done()) {
                         if (!receiver->last_chunk_received())
                             continue;
+                        if (!receiver->checkpoint_passed()) 
+                            continue;
                         receiver->check_missing_chunks();
                         if (!receiver->recv_done()) {
                             auto missed = receiver->missing_chunks_to_bytes();
                             if (1 + crypto_sign_BYTES + CIF_BYTES + 
                                 missed.size() > BUFF_BYTES)
                                 continue;
+                            // Send 0x14 message to report the missed chunks
                             simple_sign_send_stc(fd, 0x14, s, client_k, buff, 
                                 reinterpret_cast<uint8_t *>(missed.data()), 
                                 missed.size());
