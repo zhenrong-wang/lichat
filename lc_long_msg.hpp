@@ -20,7 +20,7 @@ constexpr uint8_t DEFAULT_CHUNK_SIZE_MASK = 0x05; // 2048 byte
 constexpr uint8_t CHUNK_SIZE_MASK_MAX = 0x09; // 0 ~ 9, 64byte - 32KB
 constexpr int RECV_TIMEOUT_RETURN = -6;
 
-constexpr size_t LMSG_BYTES_MIN = 1 + crypto_sign_BYTES + CIF_BYTES + MSG_ID_BYTES;
+constexpr ssize_t LMSG_BYTES_MIN = 1 + crypto_sign_BYTES + CIF_BYTES + MSG_ID_BYTES;
 
 // Currently, this protocal is for messaging, not for large file 
 // transfer, so we set the time window to a short period.
@@ -31,7 +31,7 @@ constexpr size_t LMSG_BYTES_MIN = 1 + crypto_sign_BYTES + CIF_BYTES + MSG_ID_BYT
 // Maybe we need to consider threading for large file transfer. But that 
 // would need efforts at both server side and client side.
 // To make it simple for now, we set the time window to 10.
-constexpr size_t LMSG_ALIVE_SECS = 60;
+constexpr time_t LMSG_ALIVE_SECS = 60;
 
 /**
  * MASK_TO_SIZE:
@@ -123,7 +123,7 @@ public:
     }
 
     int check_clear_timeout (time_t now) {
-        if (now - recv_start_time > LMSG_ALIVE_SECS) {
+        if (now > recv_start_time + LMSG_ALIVE_SECS) {
             // If the alive seconds passed, clear all contents.
             recv_bitmap.clear();
             missing_chunks.clear();
@@ -408,8 +408,6 @@ public:
         uint8_t chunk_header;
 
         auto size_mask = chunk_size_mask;
-        auto send_msg_id = msg_id;
-        auto send_msg_id_bytes = msg_id_bytes;
 
         auto chunk_size = CHUNK_SIZE_MIN << size_mask;
         auto nchunks = raw_long_msg.size() / chunk_size + 1;
@@ -470,7 +468,7 @@ public:
     }
 
     bool check_timeout (time_t now) {
-        if (now - send_start_time > LMSG_ALIVE_SECS) {
+        if (now > send_start_time + LMSG_ALIVE_SECS) {
             send_clear();
             return true;
         }

@@ -151,35 +151,6 @@ namespace lc_utils {
         return 0; // Good to go.
     }
 
-    static bool pass_hash_secure (std::string& password, 
-        std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
-        
-        auto ret = 
-        (crypto_pwhash_str(
-            hashed_pwd.data(), 
-            password.c_str(), 
-            password.size(), 
-            crypto_pwhash_OPSLIMIT_INTERACTIVE, 
-            crypto_pwhash_MEMLIMIT_INTERACTIVE
-        ) == 0);
-        password.clear(); // For security reasons, we clean the string after hashing.
-        return ret;
-    }
-
-    // This pass doesnt change the original pass string !
-    static bool pass_hash_dryrun (const std::string& password, 
-        std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
-        auto ret = 
-        (crypto_pwhash_str(
-            hashed_pwd.data(), 
-            password.c_str(), 
-            password.size(), 
-            crypto_pwhash_OPSLIMIT_INTERACTIVE, 
-            crypto_pwhash_MEMLIMIT_INTERACTIVE
-        ) == 0);
-        return ret;
-    }
-
     static int email_fmt_check (const std::string& email) {
         if (email.empty() || email.size() > UEMAIL_MAX_BYTES)
             return -1;
@@ -217,33 +188,12 @@ namespace lc_utils {
         return true;
     }
 
-    static bool get_addr_info(std::string& addr_str, 
-        std::array<char, INET_ADDRSTRLEN>& first_ipv4_addr) {
-        
-        if (addr_str.empty())
-            return false;
-        struct addrinfo hints, *res = nullptr;
-        std::memset(&hints, 0, sizeof hints);
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        std::memset(first_ipv4_addr.data(), 0, first_ipv4_addr.size());
-        auto status = getaddrinfo(addr_str.c_str(), nullptr, &hints, &res);
-        if (status != 0)
-            return false;
-        struct sockaddr_in *first = (sockaddr_in *)res->ai_addr;
-        inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), 
-                    first_ipv4_addr.size());
-        freeaddrinfo(res);
-        return true;
-    }
-
     bool sign_crypto_pk(const key_mgr_25519& key_mgr, 
         std::array<uint8_t, 
         crypto_sign_BYTES + crypto_box_PUBLICKEYBYTES>& signed_cpk) {
         
         if (!key_mgr.is_activated())
             return false;
-        auto sign_pk = key_mgr.get_sign_pk();
         auto crypto_pk = key_mgr.get_crypto_pk();
         auto sign_sk = key_mgr.get_sign_sk();
         unsigned long long signed_len;

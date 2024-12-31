@@ -324,9 +324,9 @@ public:
             return 1;
         if (col_end <= col_start || col_start >= win_width || col_end == 0)
             return 1;
-        size_t line_len = static_cast<size_t>(col_end - col_start);
-        size_t prefix_len = static_cast<size_t>(col_start); // Should be non-negative.
-        size_t suffix_len = static_cast<size_t>(win_width - col_end); // Should be non-negative.
+        auto line_len = col_end - col_start;
+        auto prefix_len = col_start; // Should be non-negative.
+        auto suffix_len = win_width - col_end; // Should be non-negative.
         std::string prefix(prefix_len, ' ');
         std::string suffix(suffix_len, ' ');
 
@@ -362,7 +362,7 @@ public:
         };
         utf8_out.clear();
         std::vector<struct split> splits;
-        size_t len_tmp = 0;
+        int len_tmp = 0;
         splits.push_back(split(0, 0));
         for (int32_t i = 0; i < ustr.length(); ) {
             if (ustr.char32At(i) == '\n' || ustr.char32At(i) == '\r') {
@@ -419,7 +419,7 @@ public:
         if (bare_msg.empty() || from_user.empty() || timestamp.empty())
             return false;
 
-        int height = 0, width = 0, pos = 0;
+        int height = 0, width = 0;
 
         // Important: before running the tui, we have checked the width is >=
         // min_width, which is 48. So the top_win width should be at least 32.
