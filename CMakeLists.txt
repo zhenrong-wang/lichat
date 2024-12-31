@@ -5,7 +5,6 @@ project (lichat)
 find_package(ICU REQUIRED COMPONENTS uc)
 find_package(unofficial-sodium CONFIG REQUIRED)
 
-# Pointless comment
 if(WIN32)
     message(STATUS "Configuring build for Windows")
     set(PLATFORM_LIBS ws2_32)
