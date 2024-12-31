@@ -224,6 +224,17 @@ namespace lc_utils {
         return oss.str();
     }
 
+    static std::string now_time_to_str (const time_t now_t) {
+        std::tm* now_tm = std::gmtime(&now_t);
+        std::ostringstream oss;
+        oss << (now_tm->tm_year + 1900) << '-' 
+            << (now_tm->tm_mon + 1) << '-'
+            << (now_tm->tm_mday) << '-'
+            << (now_tm->tm_hour) << ':' 
+            << (now_tm->tm_min) << ':' << (now_tm->tm_sec);
+        return oss.str();
+    }
+
     static time_t now_time (void) {
         auto now = std::chrono::system_clock::now();
         std::time_t now_t = std::chrono::system_clock::to_time_t(now);

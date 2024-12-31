@@ -1221,17 +1221,29 @@ public:
                 auto cif = it->first;
                 auto p_ctx = clients.get_ctx(cif);
                 if (p_ctx) {
+                    // Delete the context.
                     auto uid = p_ctx->get_bind_uid();
-                    if (users.get_bind_cif(0, uid, cif_curr) && cif_curr == cif)
+                    auto uname = users.get_uname_by_uemail(uid);
+                    if (users.get_bind_cif(0, uid, cif_curr) && 
+                        cif_curr == cif) {
                         users.unbind_user_ctx(0, uid);
-                    clients.delete_ctx(cif);
+                        clients.delete_ctx(cif);
+                        auto timestamp = lc_utils::now_time_to_str(now);
+                        std::string bcast_msg = 
+                            "[S]," + timestamp + "," + (*uname) + ",!";  
+                        broadcasting(
+                            reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
+                            bcast_msg.size());
+                    }
                 }
+                // Delete the connection
                 auto status = it->second.get_status();
                 it = map.erase(it);
                 ++ erased;
                 conns.update_stats_at_session_delete(status);
             }
             else {
+                // If it is active, just move to next.
                 ++ it;
             }
         }
