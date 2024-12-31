@@ -366,6 +366,52 @@ public:
     }
 };
 
+class user_list_mgr {
+    std::string user_list;
+
+public:
+
+    user_list_mgr () {}
+
+    void receive (const std::string& ulist) {
+        user_list = ulist;
+    }
+
+    bool update_status (const std::string& user_name, const bool in) {
+        std::string user_signed_in = user_name + " (in)\n";
+        std::string not_signed_in = user_name + "\n";
+        if (in) {   // If signed in.
+            auto find_pos = user_list.find(not_signed_in);
+            if (find_pos == std::string::npos)
+                return false;
+            user_list.replace(find_pos, not_signed_in.length(), user_signed_in);
+            return true;
+        }
+        auto find_pos = user_list.find(user_signed_in);
+        if (find_pos == std::string::npos)
+            return false;
+        user_list.replace(find_pos, user_signed_in.length(), not_signed_in);
+        return true; 
+    }
+
+    void add_signin_user (const std::string& user_name) {
+        user_list += (user_name + " (in)\n");
+    }
+
+    size_t count_users () {
+        std::istringstream iss(user_list);
+        std::string line;
+        size_t count = 0;
+        while (std::getline(iss, line))
+            ++ count;
+        return count;
+    }
+
+    const std::string& get_ulist () const {
+        return user_list;
+    }
+};
+
 class lichat_client {
     uint16_t server_port;
     struct sockaddr_in server_addr;
@@ -380,6 +426,7 @@ class lichat_client {
     lmsg_recv_pool lmsg_recvs;
     curr_user user;
     window_mgr winmgr;
+    user_list_mgr ulist_mgr;
     size_t heartbeat_interval_secs;
     int last_error;
 
@@ -389,7 +436,7 @@ public:
         client_fd(-1), server_pk_mgr(client_server_pk_mgr()), 
         key_dir(default_key_dir), session(client_session()), 
         client_key(key_mgr_25519(key_dir, "client_")), buffer(msg_buffer()), 
-        user(curr_user()), winmgr(window_mgr()),
+        user(curr_user()), winmgr(window_mgr()), ulist_mgr(user_list_mgr()),
         heartbeat_interval_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS), 
         last_error(0) {
 
@@ -638,17 +685,17 @@ public:
     }
 
     static void thread_run_core (window_mgr& w, const int fd, msg_buffer& buff, 
-        client_session& s, const curr_user& u, lmsg_send_pool& lm_s,
-        lmsg_recv_pool& lm_r, const client_server_pk_mgr& server_pk, 
-        const key_mgr_25519& client_k, std::vector<std::string>& msg_vec, 
-        int& core_err) {
+        client_session& s, const curr_user& u, user_list_mgr& ulm,
+        lmsg_send_pool& lm_s, lmsg_recv_pool& lm_r, 
+        const client_server_pk_mgr& server_pk, const key_mgr_25519& client_k, 
+        std::vector<std::string>& msg_vec, int& core_err) {
               
         core_err = C_NORMAL_RETURN;
         if (fd < 0) {
             core_err = C_SOCK_FD_INVALID;
             return;
         }
-        bool is_msg_recved = false;
+        bool is_msg_recved = false, is_ulist_recved = false;
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
         size_t offset = 0;
@@ -657,7 +704,7 @@ public:
         auto aes_beg = buff.recv_aes_buffer.data();
         auto sid = s.get_server_sid();
         auto cif = s.get_cinfo_hash_bytes();
-        
+
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
         std::array<uint8_t, SID_BYTES> recved_sid;
         std::array<uint8_t, CIF_BYTES> recved_cif;
@@ -805,10 +852,26 @@ public:
                     for (auto it : chunks) 
                         recved_lmsg_body += std::string(
                             reinterpret_cast<char *>(it.data()), it.size());
-                    msg_vec.push_back(recved_lmsg_body);
+                    if (recved_lmsg_body.length() > 4 && 
+                        recved_lmsg_body.substr(0, 4) == "[U],") {
+                        auto parsed = lc_utils::split_buffer(
+                            (const uint8_t *)(recved_lmsg_body.data()), 
+                            recved_lmsg_body.size(), ',', 4); 
+                        if (parsed.size() == 3) {
+                            ulm.receive(parsed[2]);
+                            is_ulist_recved = true;
+                        }
+                        else {
+                            msg_vec.push_back(recved_lmsg_body);
+                            is_msg_recved = true;
+                        }
+                    }
+                    else {
+                        msg_vec.push_back(recved_lmsg_body);
+                        is_msg_recved = true;
+                    }
                     // Delete this receiver.
                     lm_r.delete_receiver(msg_id);
-                    is_msg_recved = true;
                 }
             }
             else if (header == 0x1F) {
@@ -866,8 +929,48 @@ public:
                     return;
                 }
             }
+            if (is_ulist_recved) {
+                w.wprint_user_list(ulm.get_ulist());
+                is_ulist_recved = false;
+                continue;
+            }
             if (is_msg_recved) {
-                w.fmt_prnt_msg(msg_vec.back(), u.get_uname());
+                auto last_msg = msg_vec.back();
+                //w.wprint_to_output(last_msg);
+                auto parsed = lc_utils::split_buffer(
+                            reinterpret_cast<const uint8_t *>(last_msg.data()), 
+                            last_msg.size(), ',', 4); 
+                if (parsed.size() < 3) {
+                    msg_vec.pop_back();
+                    continue;
+                }
+                std::string bare_msg;
+                if (parsed.size() == 4 && parsed[0] == "[S]") {
+                    if (parsed[3] == "#") {
+                        if (parsed[2] != u.get_uname()) {
+                            ulm.add_signin_user(parsed[2]);
+                            bare_msg = parsed[2] + " signed up and signed in!";
+                        }
+                    }   
+                    else if (parsed[3] == ">") {
+                        if (parsed[2] != u.get_uname()) {
+                            ulm.update_status(parsed[2], true);
+                            bare_msg = parsed[2] + " signed in!";
+                        }
+                    }  
+                    else if (parsed[3] == "!") {
+                        if (parsed[2] != u.get_uname()) {
+                            ulm.update_status(parsed[2], false);
+                            bare_msg = parsed[2] + " signed out!";
+                        }
+                    }
+                    w.wprint_user_list(ulm.get_ulist());
+                    w.fmt_prnt_msg("[SYSTEM]", parsed[1], bare_msg, u.get_uname());
+                    continue;
+                }
+                bare_msg = last_msg.substr(
+                                parsed[0].size() + 1 + parsed[1].size() + 1);
+                w.fmt_prnt_msg(parsed[0], parsed[1], bare_msg, u.get_uname());
             }
         }
     }
@@ -1569,8 +1672,8 @@ public:
         // Start the core thread.
         int core_err = 0;
         std::thread core(std::bind(thread_run_core, winmgr, client_fd, buffer, 
-            session, user, lmsg_sends, lmsg_recvs, server_pk_mgr, client_key, 
-            messages, core_err));
+            session, user, ulist_mgr, lmsg_sends, lmsg_recvs, 
+            server_pk_mgr, client_key, messages, core_err));
         
         auto input_ret = winmgr.winput();
         if (heartbeat_timeout) 

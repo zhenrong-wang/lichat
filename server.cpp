@@ -1235,8 +1235,7 @@ public:
     // be encrypted. Currently it is just signed.
     bool send_user_list (const uint64_t& cif) {
         auto timestamp = lc_utils::now_time_to_str();
-        auto ulist_str = timestamp + ",[SYSTEM_USERS]," + 
-                         users.user_list_to_str(true);
+        auto ulist_str = "[U]," + timestamp + "," + users.user_list_to_str(true);
         std::vector<uint8_t> ulist_vec(ulist_str.data(), 
                                        ulist_str.data() + ulist_str.size());
         lmsg_sender new_sender;
@@ -1545,7 +1544,7 @@ public:
                         
                         timestamp = lc_utils::now_time_to_str();
                         std::string bcast_msg = 
-                            timestamp + ",[SYSTEM_BCAST]," + (*uname) + " signed out!";
+                            "[S]," + timestamp + "," + (*uname) + ",!";
                         //std::cout << bcast_msg << std::endl;
                         // Broadcasting to all active users.      
                         broadcasting(
@@ -1661,8 +1660,7 @@ public:
                         
                         timestamp = lc_utils::now_time_to_str();
                         std::string bcast_msg = 
-                            timestamp + ",[SYSTEM_BCAST]," + reg_info[1] + 
-                            " signed up and signed in!";
+                            "[S]," + timestamp + "," + reg_info[1] + ",#";
                         broadcasting(
                             reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
                             bcast_msg.size());
@@ -1717,8 +1715,8 @@ public:
                     send_user_list(cinfo_hash);
 
                     timestamp = lc_utils::now_time_to_str();
-                    std::string bcast_msg = timestamp + ",[SYSTEM_BCAST]," + 
-                                            uname + " signed in!";
+                    std::string bcast_msg = 
+                        "[S]," + timestamp + "," + uname + ",>";
                     broadcasting(
                         reinterpret_cast<const uint8_t *>(bcast_msg.c_str()), 
                         bcast_msg.size());
@@ -1729,21 +1727,20 @@ public:
                 auto sender_uname = users.get_uname_by_uemail(sender_uemail);
 
                 std::string timestamp = lc_utils::now_time_to_str();
-                auto response_size = timestamp.size() + 1 + 
-                                    sender_uname->size() + 1 + msg_size;
+                auto response_size = sender_uname->size() + 1 + 
+                                     timestamp.size() + 1 + msg_size;
 
                 std::vector<uint8_t> resp(response_size, ',');
                 offset = 0;
-                std::copy(timestamp.begin(), timestamp.end(), resp.begin());
-                offset += timestamp.size() + 1;
                 std::copy(sender_uname->begin(), sender_uname->end(), 
                           resp.begin() + offset);
                 offset += sender_uname->size() + 1;
+                std::copy(timestamp.begin(), timestamp.end(), 
+                          resp.begin() + offset);
+                offset += timestamp.size() + 1;
                 std::copy(msg_body, msg_body + msg_size, resp.begin() + offset);
-                //std::cout << std::endl 
-                //          << std::string((char *)resp.data(), resp.size()) 
-                //          << std::endl << std::endl;
                 secure_broadcasting(resp.data(), resp.size());
+                //std::cout << std::string((const char *)resp.data(), resp.size()) << std::endl;
             }
         }
     }
