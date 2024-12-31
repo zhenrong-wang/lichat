@@ -73,12 +73,12 @@ constexpr char default_user_db_path[] = "./lichat_signed_users.db";
 
 // Heartbeating related.
 constexpr time_t DEFAULT_HEARTBEAT_INTERVAL_SECS = 15;
-constexpr time_t HEARTBEAT_TIMEOUT_SECS = 120;
+constexpr time_t HEARTBEAT_TIMEOUT_SECS = 60;
 constexpr size_t HEARTBEAT_THREAD_SLEEP_MS = 500;
 constexpr size_t HEARTBEAT_BYTES = 1 + crypto_sign_BYTES + CIF_BYTES;
 
-// Every XX minutes, the server would check all the connections.
-constexpr time_t SERVER_CONNS_CHECK_SECS = 900;
+// Every 2 minutes, the server would check all the connections.
+constexpr time_t SERVER_CONNS_CHECK_SECS = HEARTBEAT_TIMEOUT_SECS * 2;
 
 // A goodbye packet is a special heartbeating packet with an extra byte '!'
 constexpr size_t GOODBYE_BYTES = HEARTBEAT_BYTES + 1;
