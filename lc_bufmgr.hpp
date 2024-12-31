@@ -33,7 +33,7 @@ struct msg_buffer {
     send_bytes(0) {}
 
     static ssize_t size_to_clear(ssize_t bytes) {
-        if(bytes < 0 || bytes >= BUFF_BYTES)
+        if(bytes < 0 || static_cast<size_t>(bytes) >= BUFF_BYTES)
             return BUFF_BYTES;
         return bytes;
     }
@@ -51,11 +51,12 @@ struct msg_buffer {
     bool is_recv_empty() const {
         return (recv_raw_bytes == 0);
     }
-    bool recved_insuff_bytes(const size_t min_bytes) const {
+    bool recved_insuff_bytes(const ssize_t min_bytes) const {
         return (recv_raw_bytes < min_bytes);
     }
     bool recved_overflow() const {
-        return (recv_raw_bytes == recv_raw_buffer.size());
+        return (recv_raw_bytes >=0 && 
+                static_cast<size_t>(recv_raw_bytes) >= recv_raw_buffer.size());
     }
 };
 

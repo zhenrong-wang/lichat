@@ -19,12 +19,12 @@ constexpr uint8_t SID_BYTES = 8;
 constexpr uint8_t CIF_BYTES = 8;
 
 // User login related
-constexpr size_t ULOGIN_MIN_BYTES = 4; // uname or uemail.
-constexpr size_t UNAME_MAX_BYTES = 32;
-constexpr size_t UEMAIL_MAX_BYTES = 256;
-constexpr size_t PASSWORD_MAX_BYTES = 64;
-constexpr size_t PASSWORD_MIN_BYTES = 4;
-constexpr size_t SPECIAL_CHAR_NUM = 26;
+constexpr ssize_t ULOGIN_MIN_BYTES = 4; // uname or uemail.
+constexpr ssize_t UNAME_MAX_BYTES = 32;
+constexpr ssize_t UEMAIL_MAX_BYTES = 256;
+constexpr ssize_t PASSWORD_MAX_BYTES = 64;
+constexpr ssize_t PASSWORD_MIN_BYTES = 4;
+constexpr ssize_t SPECIAL_CHAR_NUM = 26;
 constexpr std::array<char, SPECIAL_CHAR_NUM> special_chars = {
     '~', '!', '@', '#', '$', '%', '^', '&', '(', ')', '{', '}', '[',
     ']', '-', '_', '=', '+', ';', ':', ',', '.', '<', '>', '/', '|'
@@ -45,9 +45,9 @@ constexpr size_t INPUT_BUFF_BYTES = BUFF_BYTES - 256;
 constexpr size_t ERR_CODE_BYTES = 6;
 
 // Minimal bytes
-constexpr size_t SERVER_RECV_MIN_BYTES = 1 + CID_BYTES + 
+constexpr ssize_t SERVER_RECV_MIN_BYTES = 1 + CID_BYTES + 
                                          crypto_box_PUBLICKEYBYTES;
-constexpr size_t CLIENT_RECV_MIN_BYTES = 1 + ERR_CODE_BYTES;
+constexpr ssize_t CLIENT_RECV_MIN_BYTES = 1 + ERR_CODE_BYTES;
 
 constexpr uint8_t server_ff_failed[ERR_CODE_BYTES + 1] = 
     {0xFF, 'F', 'A', 'I', 'L', 'E', 'D'};
@@ -72,13 +72,13 @@ constexpr char default_key_dir[] = "./";
 constexpr char default_user_db_path[] = "./lichat_signed_users.db";
 
 // Heartbeating related.
-constexpr size_t DEFAULT_HEARTBEAT_INTERVAL_SECS = 15;
-constexpr size_t HEARTBEAT_TIMEOUT_SECS = 120;
+constexpr time_t DEFAULT_HEARTBEAT_INTERVAL_SECS = 15;
+constexpr time_t HEARTBEAT_TIMEOUT_SECS = 120;
 constexpr size_t HEARTBEAT_THREAD_SLEEP_MS = 500;
 constexpr size_t HEARTBEAT_BYTES = 1 + crypto_sign_BYTES + CIF_BYTES;
 
 // Every XX minutes, the server would check all the connections.
-constexpr size_t SERVER_CONNS_CHECK_SECS = 900;
+constexpr time_t SERVER_CONNS_CHECK_SECS = 900;
 
 // A goodbye packet is a special heartbeating packet with an extra byte '!'
 constexpr size_t GOODBYE_BYTES = HEARTBEAT_BYTES + 1;

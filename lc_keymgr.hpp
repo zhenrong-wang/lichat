@@ -24,10 +24,10 @@ class key_mgr_25519 {
     std::string prefix;
     bool is_empty;
 public:
-    key_mgr_25519 () : is_empty(true), key_dir(default_key_dir) {}
+    key_mgr_25519 () : key_dir(default_key_dir), is_empty(true) {}
 
     key_mgr_25519 (const std::string& dir, const std::string& pref) : 
-        is_empty(true), key_dir(dir), prefix(pref){}
+        key_dir(dir), prefix(pref), is_empty(true){}
 
     void set_key_dir (const std::string& dir) {
         key_dir = dir;

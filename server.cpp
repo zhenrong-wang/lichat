@@ -128,16 +128,14 @@ public:
             return -1;
         if (status != 0)
             return 1;
-        std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> calc_aes_key;
-        if (crypto_box_beforenm(calc_aes_key.data(), 
-            recv_client_public_key.data(), 
-            key_mgr.get_crypto_sk().data()) != 0)
+        std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES> aes_key;
+        if (lc_utils::calc_aes_key(aes_key, recv_client_public_key, 
+            key_mgr.get_crypto_sk()) != 0)
             return 3;
-
         client_cid = recv_client_cid;
         client_public_key = recv_client_public_key;
         client_sign_key = recv_client_sign_key;
-        aes256gcm_key = calc_aes_key;
+        aes256gcm_key = aes_key;
         if (!is_precalc_hash) 
             cinfo_hash = lc_utils::hash_client_info(recv_client_cid, 
                          recv_client_public_key);
@@ -158,7 +156,7 @@ public:
         last_heartbeat = t;
     }
     bool is_inactive () {
-        if (lc_utils::now_time() - last_heartbeat > HEARTBEAT_TIMEOUT_SECS) 
+        if (lc_utils::now_time() > last_heartbeat + HEARTBEAT_TIMEOUT_SECS) 
             return true;
         else 
             return false;
@@ -372,6 +370,21 @@ public:
 
     user_mgr (const std::string& path) : db_file_path(path) {}
 
+    static bool pass_hash_secure (std::string& password, 
+        std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
+        
+        auto ret = 
+        (crypto_pwhash_str(
+            hashed_pwd.data(), 
+            password.c_str(), 
+            password.size(), 
+            crypto_pwhash_OPSLIMIT_INTERACTIVE, 
+            crypto_pwhash_MEMLIMIT_INTERACTIVE
+        ) == 0);
+        password.clear(); // For security reasons, we clean the string after hashing.
+        return ret;
+    }
+
     // Return 0: db_file_path is good to read/write
     // Return 1 or 3: db_file_path is not good to read/write
     int precheck_user_db () {
@@ -393,7 +406,7 @@ public:
         std::vector<char> vec(user_db_header.size());
         file_in.read(vec.data(), user_db_header.size());
         std::streamsize bytes_read = file_in.gcount();
-        if (bytes_read != user_db_header.size()) 
+        if (static_cast<size_t>(bytes_read) != user_db_header.size()) 
             return 3;
         std::string header_str(vec.begin(), vec.begin() + vec.size());
         if (header_str != user_db_header)
@@ -437,7 +450,7 @@ public:
             size_t uemail_read_bytes = static_cast<size_t>(uemail_bytes) + 1;
             std::vector<char> uemail_read(uemail_read_bytes);
             file_in.read(uemail_read.data(), uemail_read.size());
-            if (file_in.gcount() != uemail_read_bytes) {
+            if (static_cast<size_t>(file_in.gcount()) != uemail_read_bytes) {
                 fread_error = true;
                 break;
             }
@@ -449,12 +462,12 @@ public:
             }
             std::vector<char> uname_read(uname_bytes);
             file_in.read(uname_read.data(), uname_read.size());
-            if (file_in.gcount() != uname_bytes) {
+            if (static_cast<size_t>(file_in.gcount()) != uname_bytes) {
                 fread_error = true;
                 break;
             }
             file_in.read(passhash_read.data(), passhash_read.size());
-            if (file_in.gcount() != passhash_read.size()) {
+            if (static_cast<size_t>(file_in.gcount()) != passhash_read.size()) {
                 fread_error = true;
                 break;
             }
@@ -607,7 +620,7 @@ public:
             return false;
         }
         std::array<char, crypto_pwhash_STRBYTES> hashed_pass;
-        if (!lc_utils::pass_hash_secure(user_password, hashed_pass)) {
+        if (!pass_hash_secure(user_password, hashed_pass)) {
             err = 9;
             return false;
         }
@@ -725,7 +738,6 @@ public:
 
     bool unbind_user_ctx (const uint8_t type, const std::string& str) {
         user_item *ptr_item = nullptr;
-        auto ptr_user = get_user_item(type, str);
         if (ptr_item == nullptr)
             return false;
         ptr_item->user_status = 0;
@@ -1071,7 +1083,6 @@ public:
                 continue;
             auto cif = elem.first;
             session_item *ptr_session = conns.get_session(cif);
-            auto cif_bytes = lc_utils::u64_to_bytes(cif);
             if (ptr_session == nullptr)
                 continue;
             auto addr = ptr_session->get_src_addr();
@@ -1163,7 +1174,7 @@ public:
     bool is_valid_clnt_err_msg (const uint8_t *clnt_err_code, 
         uint64_t& cinfo_hash) {
 
-        size_t expected_bytes = 1 + ERR_CODE_BYTES + 
+        ssize_t expected_bytes = 1 + ERR_CODE_BYTES + 
                                 crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES + 
                                 CID_BYTES + crypto_box_PUBLICKEYBYTES;
         if (buffer.recv_raw_bytes != expected_bytes)
@@ -1242,8 +1253,6 @@ public:
         if(!new_sender.prepare_chunks_to_send(ulist_vec))
             return false;
         lmsg_sends.add_sender(new_sender);
-        auto sign_sk = key_mgr.get_sign_sk();
-        bool lmsg_send_flag = true;
         for (auto it : new_sender.get_send_chunks()) {
             auto res = simple_sign_send(0x13, cif, it.data(), it.size());
             if (res < 0) 
@@ -1273,7 +1282,6 @@ public:
             return close_server(SET_TIMEOUT_FAILED);
         }
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
-        size_t aes_enc_len = 0;
         size_t aes_dec_len = 0;
         std::string timestamp;
         time_t conn_check_t = lc_utils::now_time();
@@ -1281,13 +1289,13 @@ public:
         while (true) {
             // Server checks all connections
             auto now = lc_utils::now_time();
-            if (now - conn_check_t >= SERVER_CONNS_CHECK_SECS) {
+            if (now >= conn_check_t + SERVER_CONNS_CHECK_SECS) {
                 std::cout << "Checking all connections ..." << std::endl;
                 auto erased = check_all_conns(now);
                 conn_check_t = now;
                 std::cout << "Erased " << erased << " inactive." << std::endl;
             }
-            if (now - lmsg_check_t >= LMSG_ALIVE_SECS) {
+            if (now >= lmsg_check_t + LMSG_ALIVE_SECS) {
                 std::cout << "Checking all long messages ..." << std::endl;
                 lmsg_sends.check_all(now);
                 lmsg_recvs.check_all(now);
@@ -1295,7 +1303,7 @@ public:
             }
             struct sockaddr_in client_addr;
             auto addr_len = sizeof(client_addr);
-            unsigned long long unsign_len = 0, sign_len = 0;
+            unsigned long long unsign_len = 0;
             buffer.clear_buffer();
             auto bytes_recv = recvfrom(server_fd, buffer.recv_raw_buffer.data(), 
                                        buffer.recv_raw_buffer.size(), 0, 
@@ -1329,7 +1337,7 @@ public:
             auto header = buffer.recv_raw_buffer[0];
             ++ offset;
             if (header == 0x00 || header == 0x01) {
-                size_t expected_size = 1 + crypto_sign_PUBLICKEYBYTES + 
+                ssize_t expected_size = 1 + crypto_sign_PUBLICKEYBYTES + 
                                         crypto_sign_BYTES + CID_BYTES + 
                                         crypto_box_PUBLICKEYBYTES;
 
@@ -1399,7 +1407,7 @@ public:
                 continue;
             }
             if (header == 0x02) {
-                size_t expected_size = 1 + CIF_BYTES + 
+                ssize_t expected_size = 1 + CIF_BYTES + 
                                     crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES 
                                     + sizeof(ok) + crypto_aead_aes256gcm_ABYTES;
                 
@@ -1589,7 +1597,7 @@ public:
                 continue;
             }
             if (header == 0x10) {
-                size_t expected_min_size = 1 + CIF_BYTES + 
+                ssize_t expected_min_size = 1 + CIF_BYTES + 
                         crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
                         crypto_aead_aes256gcm_ABYTES;
 
@@ -1614,9 +1622,9 @@ public:
                     stat = this_client->get_status(); // Retrive the latest status.
                 }
                 if (stat == 1) {
-                    size_t min_size = 1 + 1 + ULOGIN_MIN_BYTES + 1 + 
+                    ssize_t min_size = 1 + 1 + ULOGIN_MIN_BYTES + 1 + 
                                         PASSWORD_MIN_BYTES + 1;
-                    size_t max_size = 1 + 1 + UEMAIL_MAX_BYTES + 1 + 
+                    ssize_t max_size = 1 + 1 + UEMAIL_MAX_BYTES + 1 + 
                                         UNAME_MAX_BYTES + 1 +
                                         PASSWORD_MAX_BYTES + 1;
 

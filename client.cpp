@@ -427,7 +427,7 @@ class lichat_client {
     curr_user user;
     window_mgr winmgr;
     user_list_mgr ulist_mgr;
-    size_t heartbeat_interval_secs;
+    time_t heartbeat_interval_secs;
     int last_error;
 
 public:
@@ -454,10 +454,44 @@ public:
             heartbeat_interval_secs = interval_secs;
     }
 
+    static bool get_addr_info(std::string& addr_str, 
+        std::array<char, INET_ADDRSTRLEN>& first_ipv4_addr) {
+        
+        if (addr_str.empty())
+            return false;
+        struct addrinfo hints, *res = nullptr;
+        std::memset(&hints, 0, sizeof hints);
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        std::memset(first_ipv4_addr.data(), 0, first_ipv4_addr.size());
+        auto status = getaddrinfo(addr_str.c_str(), nullptr, &hints, &res);
+        if (status != 0)
+            return false;
+        struct sockaddr_in *first = (sockaddr_in *)res->ai_addr;
+        inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), 
+                    first_ipv4_addr.size());
+        freeaddrinfo(res);
+        return true;
+    }
+
+    // This pass doesnt change the original pass string !
+    static bool pass_hash_dryrun (const std::string& password, 
+        std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
+        auto ret = 
+        (crypto_pwhash_str(
+            hashed_pwd.data(), 
+            password.c_str(), 
+            password.size(), 
+            crypto_pwhash_OPSLIMIT_INTERACTIVE, 
+            crypto_pwhash_MEMLIMIT_INTERACTIVE
+        ) == 0);
+        return ret;
+    }
+
     bool set_server_addr (std::string& addr_str, std::string& port_str) {
         std::array<char, INET_ADDRSTRLEN> ipv4_addr;
         uint16_t port_num;
-        if (!lc_utils::get_addr_info(addr_str, ipv4_addr) || 
+        if (!get_addr_info(addr_str, ipv4_addr) || 
             !lc_utils::string_to_u16(port_str, port_num)) 
             return false;
         server_port = port_num;
@@ -654,14 +688,14 @@ public:
         return true;
     }
 
-    static void thread_heartbeat (const size_t interval_secs) {
+    static void thread_heartbeat (const time_t interval_secs) {
         while (heartbeating) {
             auto now = lc_utils::now_time();
             if (now - last_heartbeat_recv >= HEARTBEAT_TIMEOUT_SECS) {
                 heartbeat_timeout.store(true);
                 return;
             }
-            if ((now - last_heartbeat_sent) >= interval_secs) 
+            if (now >= last_heartbeat_sent + interval_secs) 
                 heartbeat_req.store(true);
             std::this_thread::sleep_for(
                 std::chrono::milliseconds(HEARTBEAT_THREAD_SLEEP_MS));
@@ -805,7 +839,8 @@ public:
                 }
                 // Handle the 0x13 (long messages with signature and cif)
                 else {
-                    if (bytes < 1 + CIF_BYTES + MSG_ID_BYTES + 2)
+                    ssize_t min_bytes = 1 + CIF_BYTES + MSG_ID_BYTES + 2;
+                    if (bytes < min_bytes)
                         continue;
                     if (std::memcmp(raw_beg + offset, cif.data(), cif.size()) != 0)
                         continue;
@@ -1128,12 +1163,10 @@ public:
 
     // Read the recv_raw_buffer and decrypt message body to recv_aes_buffer
     bool decrypt_recv_0x10raw_bytes (const ssize_t recved_raw_bytes) {
-        if (recved_raw_bytes < lc_utils::calc_encrypted_len(1))
+        if (recved_raw_bytes < static_cast<ssize_t>(lc_utils::calc_encrypted_len(1)))
             return false;
         auto aes_key = session.get_aes256gcm_key();
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
-        std::array<uint8_t, SID_BYTES> sid;
-        std::array<uint8_t, CIF_BYTES> cif_bytes;
         auto begin = buffer.recv_raw_buffer.begin();
         size_t offset = 0; // Omit first byte 0x10.
         unsigned long long aes_dec_len = 0;
@@ -1245,7 +1278,6 @@ public:
         std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> recved_server_spk;
         std::array<uint8_t, crypto_box_PUBLICKEYBYTES> recved_server_cpk;
         struct sockaddr_in msg_addr;
-        size_t aes_enc_len = 0;
         size_t aes_dec_len = 0;
         size_t offset = 0;
 
@@ -1316,7 +1348,7 @@ public:
                     if (header == 0x00) {
                         if (!session.requested_server_key())
                             continue;
-                        size_t expected_len = 1 + crypto_sign_PUBLICKEYBYTES + 
+                        ssize_t expected_len = 1 + crypto_sign_PUBLICKEYBYTES + 
                                               crypto_sign_BYTES + 
                                               crypto_box_PUBLICKEYBYTES +
                                               crypto_aead_aes256gcm_NPUBBYTES + 
@@ -1345,7 +1377,7 @@ public:
                     else {
                         if (session.requested_server_key())
                             continue;
-                        size_t expected_len = 1 + crypto_sign_BYTES + 
+                        ssize_t expected_len = 1 + crypto_sign_BYTES + 
                                               sizeof(ok) +
                                               crypto_aead_aes256gcm_NPUBBYTES + 
                                               SID_BYTES + CIF_BYTES + 
@@ -1449,7 +1481,7 @@ public:
                     auto header = buffer.recv_raw_buffer[0];
                     auto beg = buffer.recv_raw_buffer.begin();
                     // 1 + 6-byte err + CIF + deleted_sid + server_sign_pk + signed(server_cpk)
-                    size_t expected_err_size = 1 + ERR_CODE_BYTES + CIF_BYTES + 
+                    ssize_t expected_err_size = 1 + ERR_CODE_BYTES + CIF_BYTES + 
                                                SID_BYTES + 
                                                crypto_sign_PUBLICKEYBYTES + 
                                                crypto_sign_BYTES + 
@@ -1498,7 +1530,7 @@ public:
                         continue; // Now, only handles 0x02 header.
                         // Expected: 0x02 + aes_nonce + encrypted(sid + cif + ok + checksum)
                     ++ offset;
-                    size_t expected_ok_size = 1 + 
+                    ssize_t expected_ok_size = 1 + 
                                               crypto_aead_aes256gcm_NPUBBYTES + 
                                               SID_BYTES + CIF_BYTES + 
                                               sizeof(ok) + 
@@ -1535,9 +1567,11 @@ public:
                     continue; 
                 }
                 // Now status == 4
-                if (buffer.recv_raw_bytes < lc_utils::calc_encrypted_len(1) || 
+                if ((buffer.recv_raw_bytes < 
+                        static_cast<ssize_t>(lc_utils::calc_encrypted_len(1))) || 
                     buffer.recv_raw_bytes > 
-                        lc_utils::calc_encrypted_len(UNAME_MAX_BYTES))
+                        static_cast<ssize_t>(
+                            lc_utils::calc_encrypted_len(UNAME_MAX_BYTES)))
                     continue;
                 if (buffer.recv_raw_buffer[0] != 0x10)
                     continue;
@@ -1633,7 +1667,7 @@ public:
                         continue;
                 }
                 std::array<char, crypto_pwhash_STRBYTES> hashed_pwd;
-                if (!lc_utils::pass_hash_dryrun(password, hashed_pwd)) {
+                if (!pass_hash_dryrun(password, hashed_pwd)) {
                     last_error = HASH_PASSWORD_FAILED;
                     password.clear(); // For security concern.
                     return close_client(HASH_PASSWORD_FAILED);
@@ -1675,7 +1709,7 @@ public:
             session, user, ulist_mgr, lmsg_sends, lmsg_recvs, 
             server_pk_mgr, client_key, messages, core_err));
         
-        auto input_ret = winmgr.winput();
+        winmgr.winput();
         if (heartbeat_timeout) 
             core_err = C_HEARTBEAT_TIME_OUT;
         // Stop the threads.
