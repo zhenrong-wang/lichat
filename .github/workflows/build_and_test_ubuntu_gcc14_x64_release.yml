@@ -7,7 +7,7 @@ on:
       - '**.cpp'
       - '**.hpp'
       - '**/CMakeLists.txt'
-      - '.github/workflows/build_linux_x64_release.yml'
+      - '.github/workflows/build_and_test_ubuntu_gcc14_x64_release.yml'
       - 'CMakePresets.json'
   pull_request:
     branches: [ "feature/cross-platform-and-dependencies" ]
@@ -15,7 +15,7 @@ on:
       - '**.cpp'
       - '**.hpp'
       - '**/CMakeLists.txt'
-      - '.github/workflows/build_linux_x64_release.yml'
+      - '.github/workflows/build_and_test_ubuntu_gcc14_x64_release.yml'
       - 'CMakePresets.json'
 
 jobs:

@@ -7,7 +7,7 @@ on:
       - '**.cpp'
       - '**.hpp'
       - '**/CMakeLists.txt'
-      - '.github/workflows/build_windows_x64_release.yml'
+      - '.github/workflows/build_and_test_windows_msvc_x64_release.yml'
       - 'CMakePresets.json'
   pull_request:
     branches: [ "feature/cross-platform-and-dependencies" ]
@@ -15,7 +15,7 @@ on:
       - '**.cpp'
       - '**.hpp'
       - '**/CMakeLists.txt'
-      - '.github/workflows/build_windows_x64_release.yml'
+      - '.github/workflows/build_and_test_windows_msvc_x64_release.yml'
       - 'CMakePresets.json'
 
 jobs:
