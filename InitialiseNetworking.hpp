@@ -8,7 +8,7 @@
 #else
 #    include <arpa/inet.h>
 #    include <fcntl.h>
-#    include <netinet/in.h
+#    include <netinet/in.h>
 #endif
 
 // C++ std lib includes
