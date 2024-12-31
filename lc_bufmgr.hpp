@@ -33,7 +33,7 @@ struct msg_buffer {
     send_bytes(0) {}
 
     static ssize_t size_to_clear(ssize_t bytes) {
-        if(bytes < 0 || static_cast<size_t>(bytes) >= BUFF_BYTES)
+        if(bytes >= BUFF_BYTES)
             return BUFF_BYTES;
         return bytes;
     }
