@@ -1463,6 +1463,7 @@ public:
                 if (is_aes_ok && is_msg_ok) {
                     this_conn->activate(); // Activate the session
                     this_conn->set_src_addr(client_addr); // Update the addr.
+                    this_conn->set_last_heartbeat(lc_utils::now_time());
                     simple_secure_send(0x02, cinfo_hash, ok, sizeof(ok));
                     continue;
                 }
