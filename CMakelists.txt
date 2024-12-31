@@ -6,9 +6,13 @@ find_package(ICU REQUIRED COMPONENTS uc)
 find_package(unofficial-sodium CONFIG REQUIRED)
 
 if(WIN32)
+    message(STATUS "Configuring build for Windows")
     set(PLATFORM_LIBS ws2_32)
+elseif(UNIX AND NOT APPLE)
+    message(STATUS "Configuring build for Linux")
+    set(PLATFORM_LIBS Threads::Threads)
 else()
-    set(PLATFORM_LIBS "")
+    message(FATAL_ERROR "Unsupported platform")
 endif()
 
 ###################################################################################################
