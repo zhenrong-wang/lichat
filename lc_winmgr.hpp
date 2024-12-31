@@ -409,31 +409,15 @@ public:
         return 0;
     }
 
-    int fmt_prnt_msg (const std::string& utf8_msg, const std::string& uname) {
-        if (utf8_msg.empty())
-            return 1;
-        
-        // The standard format:
-        // timestamp,sender_uname,utf8_msg_body
-        auto parsed_msg = lc_utils::split_buffer(
-            reinterpret_cast<const uint8_t *>(utf8_msg.data()), 
-            utf8_msg.size(), ',', 3);
-        if (parsed_msg.size() < 3)
-            return 3; // Not a valid message
-        std::string timestmp = parsed_msg[0];
-        std::string msg_uname = parsed_msg[1];
-        std::string bare_msg = utf8_msg.substr(parsed_msg[0].size() + 1 + 
-                                              parsed_msg[1].size() + 1);
-        
-        if (bare_msg.empty())
-            return 5;
-        
-        // Print the system users to the side window.
-        if (msg_uname == "[SYSTEM_USERS]") {
-            wprintw(side_win, bare_msg.c_str());
-            wrefresh(side_win);
-            return 0;
-        }
+    void wprint_user_list (const std::string& user_list) {
+        mvwprintw(side_win, 0, 0, "Users:\n%s", user_list.c_str());
+        wrefresh(side_win);
+    }
+
+    bool fmt_prnt_msg (const std::string& from_user, const std::string& timestamp,
+        const std::string& bare_msg, const std::string& uname) {
+        if (bare_msg.empty() || from_user.empty() || timestamp.empty())
+            return false;
 
         int height = 0, width = 0, pos = 0;
 
@@ -447,7 +431,7 @@ public:
         std::string fmt_name, fmt_timestmp, fmt_msg;
         bool left_align = true;
 
-        if (msg_uname == uname) {
+        if (from_user == uname) {
             col_start = (width < 2) ? 0 : (width / 2); // value >= 0
             col_end = width;
             left_align = false;
@@ -457,17 +441,17 @@ public:
         else {
             col_start = 0;
             col_end = (width * 3 / 4);
-            fmt_for_print(fmt_name, msg_uname + ":", col_start, col_end, width, 
+            fmt_for_print(fmt_name, from_user + ":", col_start, col_end, width, 
                           left_align);
         }
-        fmt_for_print(fmt_timestmp, timestmp, col_start, col_end, width, 
+        fmt_for_print(fmt_timestmp, timestamp, col_start, col_end, width, 
                       left_align);
         fmt_for_print(fmt_msg, bare_msg, col_start, col_end, width, left_align);
 
         std::string fmt_lines = fmt_name + fmt_timestmp + fmt_msg;
         wprintw(top_win, "%s\n", fmt_lines.c_str());
         wrefresh(top_win);
-        return 0;
+        return true;
     }
 
     void welcome_user (const std::string& uemail, const std::string& uname) {
@@ -479,11 +463,6 @@ public:
     void wprint_to_output (const std::string& msg) {
         wprintw(top_win, msg.c_str());
         wrefresh(top_win);
-    }
-
-    void wprint_user_list (const std::string& ulist_str) {
-        wprintw(side_win, ulist_str.c_str());
-        wrefresh(side_win);
     }
 
     static void wprint_array(WINDOW *win, const uint8_t *arr, const size_t n) {
