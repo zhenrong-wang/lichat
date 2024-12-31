@@ -12,6 +12,7 @@
 #    include <ws2tcpip.h>
 #    pragma comment(lib, "ws2_32.lib")
 #else
+#    include <fcntl.h>
 #    include <sys/socket.h>
 #    include <unistd.h>
 #endif
@@ -88,7 +89,7 @@ public:
 struct SocketJanitor {
     socket_t handle{INVALID_SOCKET_VALUE};
 
-    SocketJanitor()                                = default;
+    SocketJanitor()                                = delete;
     SocketJanitor(const SocketJanitor&)            = delete;
     SocketJanitor& operator=(const SocketJanitor&) = delete;
     SocketJanitor(SocketJanitor&& other) noexcept : handle{std::exchange(other.handle, INVALID_SOCKET_VALUE)} {}
@@ -116,21 +117,30 @@ auto make_sockaddr_in(uint16_t port) -> ::sockaddr_in
     return out;
 }
 
-auto try_make_sockaddr_in(std::string_view address, uint16_t port) -> std::optional<::sockaddr_in>
+auto try_make_sockaddr_in(const std::string& address, uint16_t port) -> std::optional<::sockaddr_in>
 {
-    auto ipv4_addr = std::string(INET_ADDRSTRLEN, '\0');
-    if (not lc_utils::get_addr_info(address, ipv4_addr)) {
+    auto hints = addrinfo{};
+
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_protocol = IPPROTO_UDP;
+
+    const auto port_num_str = std::to_string(port);
+
+    addrinfo* result = nullptr;
+    if (::getaddrinfo(address.c_str(), port_num_str.c_str(), &hints, &result) != 0) {
         return {};
     }
 
-    auto out            = ::sockaddr_in{};
-    out.sin_addr.s_addr = inet_addr(ipv4_addr.data());
-    out.sin_port        = htons(port);
+    // Use the first result
+    auto out = ::sockaddr_in{};
+    memcpy(&out, result->ai_addr, result->ai_addrlen);
+    freeaddrinfo(result);
 
     return out;
 }
 
-auto make_sockaddr_in(std::string_view address, uint16_t port) -> ::sockaddr_in
+auto make_sockaddr_in(const std::string& address, uint16_t port) -> ::sockaddr_in
 {
     auto out = try_make_sockaddr_in(address, port);
     if (not out) {
@@ -152,13 +162,13 @@ auto make_sockaddr_in(std::string_view address, uint16_t port) -> ::sockaddr_in
 
     return true;
 #else
-    auto flags = fcntl(client_fd, F_GETFL, 0);
+    auto flags = fcntl(socket_handle, F_GETFL, 0);
     if (flags == -1) {
         return false;
     }
 
     flags |= O_NONBLOCK;
-    if (fcntl(client_fd, F_SETFL, flags) == -1) {
+    if (fcntl(socket_handle, F_SETFL, flags) == -1) {
         return false;
     }
 

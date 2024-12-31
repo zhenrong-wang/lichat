@@ -347,7 +347,6 @@ class lichat_client {
     uint16_t                  server_port;
     struct sockaddr_in        server_addr;
     lichat::net::ClientSocket socket;
-    int                       client_fd;
     client_server_pk_mgr      server_pk_mgr;
     std::string               key_dir;
     client_session            session;
@@ -363,7 +362,6 @@ public:
         : server_port{port_num}
         , server_addr{make_server_address(address, port_num)}
         , socket{address, port_num}
-        , client_fd(-1)
         , server_pk_mgr(client_server_pk_mgr())
         , key_dir(default_key_dir)
         , session{server_addr}
@@ -379,7 +377,7 @@ public:
         }
     }
 
-    [[nodiscard]] static auto make_server_address(std::string_view address, uint16_t port_num) -> ::sockaddr_in
+    [[nodiscard]] static auto make_server_address(const std::string& address, uint16_t port_num) -> ::sockaddr_in
     {
         auto out = lichat::net::try_make_sockaddr_in(address, port_num);
         if (not out) {
@@ -897,14 +895,11 @@ public:
 
     bool run_client(void)
     {
-        if (!client_key.is_activated()) {
+        if (not client_key.is_activated()) {
             std::cout << "Key manager not activated." << std::endl;
             return close_client(CLIENT_KEY_MGR_ERROR);
         }
-        if (client_fd == -1) {
-            std::cout << "Client not started." << std::endl;
-            return close_client(SOCK_FD_INVALID);
-        }
+
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> server_aes_nonce;
         std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES>  aes_key;
         // std::array<uint8_t, SID_BYTES> server_sid;
@@ -920,7 +915,7 @@ public:
         while (true) {
             auto status = session.get_status();
             if (status == 0) {
-                auto read_pk = server_pk_mgr.read_server_pk();
+                 auto read_pk = server_pk_mgr.read_server_pk();
                 offset       = 0;
                 if (!read_pk)
                     buffer.send_buffer[0] = 0x00;
@@ -937,7 +932,14 @@ public:
 
                 std::copy(signed_cid_cpk.begin(), signed_cid_cpk.end(), buffer.send_buffer.begin() + offset);
                 buffer.send_bytes = offset + signed_cid_cpk.size();
-                socket.send_to(session.get_src_addr(), buffer.send_buffer);
+                auto const sent_count = socket.send_to(
+                    session.get_src_addr(), lichat::const_byte_span_t{buffer.send_buffer.data(), static_cast<size_t>(buffer.send_bytes)});
+                if (sent_count < 0) {
+                    std::cerr << "Send error: " << lichat::net::get_last_socket_error() << std::endl;
+                }
+                else {
+                  std::cout << "Sent " << sent_count << " bytes" << std::endl;
+                }
 
                 // 0x00: requested server key, 0x01: not requested server key
                 session.sent_cinfo((buffer.send_buffer[0] == 0x00));

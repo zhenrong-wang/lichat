@@ -5,7 +5,7 @@ namespace lichat::net {
 class ServerSocket {
     ::sockaddr_in address_info{};
     socket_t      native_socket{INVALID_SOCKET_VALUE};
-    SocketJanitor socket_janitor{};
+    SocketJanitor socket_janitor;
 
     [[nodiscard]] static auto set_socket_timeout(socket_t native_socket)
     {

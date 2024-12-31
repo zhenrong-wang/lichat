@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstring> // For C string
 #include <ctime>
+#include <format>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -768,29 +769,48 @@ public:
     }
 };
 
+
+
+class ServerException : public std::runtime_error {
+    SERVER_ERRORS error_code_{NORMAL_RETURN};
+
+public:
+    explicit ServerException(std::string_view msg, SERVER_ERRORS ec) : std::runtime_error{std::string{msg}}, error_code_{ec} {}
+    [[nodiscard]] auto error_code() const noexcept { return error_code_; }
+};
+
 // The main class.
 class lichat_server {
     lichat::net::ServerSocket socket;
     std::string               key_dir;    // Key directory
     key_mgr_25519             key_mgr;    // key manager
-    msg_buffer                buffer;     // Message core processor
+    msg_buffer                buffer{};   // Message core processor
     user_mgr                  users;      // all users
-    session_pool              conns;      // all sessions.
-    ctx_pool                  clients;    // all clients(contexts).
+    session_pool              conns{};    // all sessions.
+    ctx_pool                  clients{};  // all clients(contexts).
     long_msg                  lmsg;       // manage long messages.
-    int                       last_error; // error code
+    int                       last_error{0}; // error code
+
+    // Start the server and handle possible failures
+    void init()
+    {
+        if (key_mgr.key_mgr_init() != 0) {
+            throw ServerException{"Key manager not activated.", KEYMGR_FAILED};
+        }
+
+        if (users.precheck_user_db() != 0) {
+            throw ServerException{std::format("User database precheck failed. {}", users.precheck_user_db()), USERDB_PRECHECK_FAILED};
+        }
+
+        std::cout << "LightChat (LiChat) Service started." << std::endl << "UDP Listening Port: " << socket.port() << std::endl;
+    }
 
 public:
     // A simple constructor
-    lichat_server(uint16_t port) : socket{port}
+    lichat_server(uint16_t port)
+        : socket{port}, key_dir{default_key_dir}, key_mgr{key_dir, "server_"}, users{default_user_db_path}, conns{}, clients{}
     {
-        key_dir    = default_key_dir;
-        key_mgr    = key_mgr_25519(key_dir, "server_");
-        buffer     = msg_buffer();
-        users      = user_mgr(default_user_db_path);
-        conns      = session_pool();
-        clients    = ctx_pool();
-        last_error = 0;
+        init();
     }
 
     void set_key_dir(const std::string& dir)
@@ -810,22 +830,6 @@ public:
     int get_last_error(void)
     {
         return last_error;
-    }
-
-    // Start the server and handle possible failures
-    bool start_server(void)
-    {
-        if (key_mgr.key_mgr_init() != 0) {
-            std::cout << "Key manager not activated." << std::endl;
-            return close_server(KEYMGR_FAILED);
-        }
-        if (users.precheck_user_db() != 0) {
-            std::cout << "User database precheck failed. " << users.precheck_user_db() << std::endl;
-            return close_server(USERDB_PRECHECK_FAILED);
-        }
-
-        std::cout << "LightChat (LiChat) Service started." << std::endl << "UDP Listening Port: " << socket.port() << std::endl;
-        return true;
     }
 
     bool is_session_valid(const uint64_t& cinfo_hash)
@@ -1231,7 +1235,6 @@ public:
                 std::cout << "Erased " << erased << " inactive." << std::endl;
             }
             struct sockaddr_in client_addr;
-            auto               addr_len   = sizeof(client_addr);
             unsigned long long unsign_len = 0, sign_len = 0;
             buffer.clear_buffer();
             const auto bytes_recv = socket.receive_from(client_addr, buffer.recv_raw_buffer);
@@ -1239,6 +1242,9 @@ public:
                 continue;
 
             buffer.recv_raw_bytes = bytes_recv;
+
+            std::cout << "Server received bytes!" << std::endl;
+
             if (buffer.recved_insuff_bytes(SERVER_RECV_MIN_BYTES) || buffer.recved_overflow()) {
                 std::cout << "Received message size invalid." << std::endl;
                 continue; // If size is invalid, ommit.
@@ -1576,20 +1582,32 @@ public:
 // The simplest driver. You can improve it if you'd like to go further.
 int main(int argc, char** argv)
 {
-    if (sodium_init() < 0) {
-        std::cout << "Failed to init libsodium." << std::endl;
-        return 1;
-    }
-    uint16_t port = DEFAULT_SERVER_PORT;
-    if (argc > 1) {
-        if (lc_utils::string_to_u16(argv[1], port))
-            std::cout << "Using the specified port: " << port << std::endl;
-        else
-            std::cout << "Specified port " << argv[1] << " is invalid. Using the default 8081." << std::endl;
-    }
-    else {
-        std::cout << "No port specified, using the default 8081." << std::endl;
-    }
+    try {
+        auto _ = lichat::net::NetworkingInitializer{};
 
-    return lichat_server{port}.run_server();
+        if (sodium_init() < 0) {
+            std::cout << "Failed to init libsodium." << std::endl;
+            return 1;
+        }
+        uint16_t port = DEFAULT_SERVER_PORT;
+        if (argc > 1) {
+            if (lc_utils::string_to_u16(argv[1], port))
+                std::cout << "Using the specified port: " << port << std::endl;
+            else
+                std::cout << "Specified port " << argv[1] << " is invalid. Using the default 8081." << std::endl;
+        }
+        else {
+            std::cout << "No port specified, using the default 8081." << std::endl;
+        }
+
+        return lichat_server{port}.run_server();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return -1;
+    }
+    catch (...) {
+        std::cerr << "Fatal error: UNKNOWN" << std::endl;
+        return -2;
+    }
 }

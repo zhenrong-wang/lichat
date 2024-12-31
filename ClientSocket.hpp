@@ -8,7 +8,7 @@ namespace lichat::net {
 class ClientSocket {
     ::sockaddr_in address_info{};
     socket_t      native_socket{INVALID_SOCKET_VALUE};
-    SocketJanitor socket_janitor{};
+    SocketJanitor socket_janitor;
 
     [[nodiscard]] static auto set_socket_timeout(socket_t native_socket, std::chrono::milliseconds timeout)
     {
@@ -41,7 +41,7 @@ class ClientSocket {
     }
 
 public:
-    ClientSocket(std::string_view address, uint16_t port)
+    ClientSocket(const std::string& address, uint16_t port)
         : address_info{make_sockaddr_in(address, port)}
         , native_socket{::socket(AF_INET, SOCK_DGRAM, 0)}
         , socket_janitor{init_native_socket(native_socket, address_info)}

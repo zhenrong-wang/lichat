@@ -18,7 +18,7 @@ public:
     {
         // std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
         // return converter.to_bytes(wstr);
-        icu::UnicodeString ustr;
+        icu::UnicodeString ustr;  
         if (sizeof(wchar_t) == 2)
             ustr = icu::UnicodeString(reinterpret_cast<const UChar*>(wstr.data(), wstr.size()));
         else

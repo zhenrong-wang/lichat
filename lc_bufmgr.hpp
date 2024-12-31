@@ -31,21 +31,19 @@ typedef signed long ssize_t;
 #include <iostream>
 
 struct msg_buffer {
-    std::array<uint8_t, BUFF_BYTES> recv_raw_buffer;
-    ssize_t                         recv_raw_bytes;
+    std::array<uint8_t, BUFF_BYTES> recv_raw_buffer{};
+    ssize_t                         recv_raw_bytes{0};
 
     // A buffer to handle aes decryption
-    std::array<uint8_t, BUFF_BYTES> recv_aes_buffer;
-    ssize_t                         recv_aes_bytes;
+    std::array<uint8_t, BUFF_BYTES> recv_aes_buffer{};
+    ssize_t                         recv_aes_bytes{0};
 
-    std::array<uint8_t, BUFF_BYTES> send_aes_buffer;
-    ssize_t                         send_aes_bytes;
+    std::array<uint8_t, BUFF_BYTES> send_aes_buffer{};
+    ssize_t                         send_aes_bytes{0};
 
     // A buffer to send aes_encrypted messages
-    std::array<uint8_t, BUFF_BYTES> send_buffer;
-    ssize_t                         send_bytes;
-
-    msg_buffer() : recv_raw_bytes(0), recv_aes_bytes(0), send_aes_bytes(0), send_bytes(0) {}
+    std::array<uint8_t, BUFF_BYTES> send_buffer{};
+    ssize_t                         send_bytes{0};
 
     static ssize_t size_to_clear(ssize_t bytes)
     {
