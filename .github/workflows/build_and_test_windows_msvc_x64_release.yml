@@ -1,23 +1,22 @@
-name: "Windows | MSVC++ | x64 | Release "
+name: "Windows | MSVC++ | x64 | Release"
 
 on:
   push:
     branches: [ "feature/cross-platform-and-dependencies" ]
     paths:
-      - ./*.cpp
-      - ./*.hpp
-      - .github/workflows/build_and_test_windows_msvc_x64_release.yml
-      - CMakeLists.txt
+      - '**.cpp'
+      - '**.hpp'
+      - '**/CMakeLists.txt'
+      - '.github/workflows/build_windows_x64_release.yml'
+      - 'CMakePresets.json'
   pull_request:
     branches: [ "feature/cross-platform-and-dependencies" ]
     paths:
-      - ./*.cpp
-      - ./*.hpp
-      - .github/workflows/build_and_test_windows_msvc_x64_release.yml
-      - CMakeLists.txt
-
-env:
-  BUILD_TYPE: Release
+      - '**.cpp'
+      - '**.hpp'
+      - '**/CMakeLists.txt'
+      - '.github/workflows/build_windows_x64_release.yml'
+      - 'CMakePresets.json'
 
 jobs:
   build:
@@ -27,17 +26,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: lukka/run-vcpkg@v11.5
       
-      - name: Resolve dependencies
-        run: |
-          vcpkg install
-
-      - name: Configure
-        run: cmake -B ${{github.workspace}}/build/msvc/x64/release -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+      - name: Resolve dependencies and configure
+        run: cmake --preset=x64-windows-release
 
       - name: Build
-        run: cmake --build ${{github.workspace}}/build/msvc/x64/release --config ${{env.BUILD_TYPE}}
-
-      - name: Test
-        working-directory: ${{github.workspace}}\build\msvc\x64\release\test\${{env.BUILD_TYPE}}
-        shell: cmd
-        run: ${{github.workspace}}\build\msvc\x64\release\test\${{env.BUILD_TYPE}}\fooTest.exe
+        run: cmake --build --preset=x64-windows-release
