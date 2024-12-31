@@ -1709,9 +1709,10 @@ public:
             session, user, ulist_mgr, lmsg_sends, lmsg_recvs, 
             server_pk_mgr, client_key, messages, core_err));
         
-        winmgr.winput();
-        if (heartbeat_timeout) 
+        auto winput_res = winmgr.winput();
+        if (winput_res != 0 && heartbeat_timeout)
             core_err = C_HEARTBEAT_TIME_OUT;
+        
         // Stop the threads.
         heartbeating.store(false);
         core_running.store(false);
