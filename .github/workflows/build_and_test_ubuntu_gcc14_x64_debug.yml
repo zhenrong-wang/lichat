@@ -35,7 +35,9 @@ jobs:
 
       - name: Resolve dependencies and configure
         run: |
+          ls -la ${{github.workspace}}
           cd ${{github.workspace}}
+          echo "Currently in $(pwd)"
           cmake --preset=x64-linux-debug -S .
 
       - name: Build
