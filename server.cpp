@@ -737,7 +737,7 @@ public:
     }
 
     bool unbind_user_ctx (const uint8_t type, const std::string& str) {
-        user_item *ptr_item = nullptr;
+        user_item *ptr_item = get_user_item(type, str);
         if (ptr_item == nullptr)
             return false;
         ptr_item->user_status = 0;
