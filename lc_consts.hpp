@@ -38,8 +38,8 @@ constexpr uint16_t DEFAULT_SERVER_PORT = 8081;
 constexpr uint8_t ok[] = {'O', 'K'};
 
 // Buffer size
-constexpr size_t BUFF_BYTES = 65536;
-constexpr size_t INPUT_BUFF_BYTES = BUFF_BYTES - 256;
+constexpr ssize_t BUFF_BYTES = 65536;
+constexpr ssize_t INPUT_BUFF_BYTES = BUFF_BYTES - 256;
 
 // Err code has 1-byte header + 6-byte body
 constexpr size_t ERR_CODE_BYTES = 6;
@@ -84,10 +84,10 @@ constexpr time_t SERVER_CONNS_CHECK_SECS = 900;
 constexpr size_t GOODBYE_BYTES = HEARTBEAT_BYTES + 1;
 
 // Handshake related
-constexpr size_t HANDSHAKE_TIMEOUT_SECS = 15;
+constexpr time_t HANDSHAKE_TIMEOUT_SECS = 15;
 
 // Server receive wait
-constexpr size_t SERVER_RECV_WAIT_SECS = 10;
+constexpr time_t SERVER_RECV_WAIT_SECS = 10;
 
 
 constexpr size_t LMSG_KEY_TRASH_SIZE = 65536;
