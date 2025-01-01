@@ -1,0 +1,41 @@
+name: "Ubuntu | GCC 14 | x64 | Release"
+
+on:
+  push:
+    branches: [ "feature/cross-platform-and-dependencies" ]
+    paths:
+      - '**.cpp'
+      - '**.hpp'
+      - '**/CMakeLists.txt'
+      - '.github/workflows/build_and_test_ubuntu_gcc14_x64_release.yml'
+      - 'CMakePresets.json'
+  pull_request:
+    branches: [ "feature/cross-platform-and-dependencies" ]
+    paths:
+      - '**.cpp'
+      - '**.hpp'
+      - '**/CMakeLists.txt'
+      - '.github/workflows/build_and_test_ubuntu_gcc14_x64_release.yml'
+      - 'CMakePresets.json'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/run-vcpkg@v11.5
+
+      - name: Install platform dependencies
+        shell: bash
+        run:  |
+          sudo apt update
+          sudo apt install gcc-14 g++-14 ninja-build autoconf-archive libncursesw5-dev
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 120 --slave /usr/bin/g++ g++ /usr/bin/g++-14 --slave /usr/bin/gcov gcov /usr/bin/gcov-14
+          bootstrap-vcpkg.sh
+
+      - name: Resolve build dependencies and configure
+        run: cmake --preset=x64-linux-release
+
+      - name: Build
+        run: cmake --build --preset=x64-linux-release
