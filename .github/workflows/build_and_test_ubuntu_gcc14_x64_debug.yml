@@ -9,6 +9,8 @@ on:
       - '**/CMakeLists.txt'
       - '.github/workflows/build_and_test_ubuntu_gcc14_x64_debug.yml'
       - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
   pull_request:
     branches: [ "feature/cmake-vcpkg-github-ci" ]
     paths:
@@ -17,6 +19,8 @@ on:
       - '**/CMakeLists.txt'
       - '.github/workflows/build_and_test_ubuntu_gcc14_x64_debug.yml'
       - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
 
 jobs:
   build:
