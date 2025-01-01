@@ -1280,10 +1280,10 @@ struct Args {
     return out;
 }
 
-int main(size_t argc, const char** argv)
+int main(int argc, const char** argv)
 {
     try {
-        const auto [address, port_num] = parse_args(std::span{argv, argc});
+        const auto [address, port_num] = parse_args(std::span{argv, static_cast<size_t>(argc)});
         std::cout << "Trying to connect to server " << address << ":" << port_num << std::endl;
 
         auto _ = lichat::net::NetworkingInitializer{};

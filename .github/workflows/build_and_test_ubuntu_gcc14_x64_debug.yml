@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run:  |
           sudo apt update
-          sudo apt install gcc-14 g++-14 ninja-build
+          sudo apt install gcc-14 g++-14 ninja-build libncursesw5-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 120 --slave /usr/bin/g++ g++ /usr/bin/g++-14 --slave /usr/bin/gcov gcov /usr/bin/gcov-14
 
       - name: Resolve dependencies and configure

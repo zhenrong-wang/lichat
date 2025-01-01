@@ -16,8 +16,8 @@ class ClientSocket {
         ::DWORD timeout_val = timeout.count();
 #else
         ::timeval timeout_val;
-        timeout.tv_sec  = std::chrono::duration_cast<std::chrono::seconds>(timeout).count();
-        timeout.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(timeout).count() - 1'000'000 * timeout.tv_sec;
+        timeout_val.tv_sec  = std::chrono::duration_cast<std::chrono::seconds>(timeout).count();
+        timeout_val.tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(timeout).count() - 1'000'000 * timeout_val.tv_sec;
 #endif
 
         return ::setsockopt(native_socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_val), sizeof(timeout_val));
@@ -80,7 +80,7 @@ public:
         auto       src_address_info          = ::sockaddr_in{};
         auto       received_address_obj_size = socklen_t{sizeof(src_address_info)};
         auto const bytes_recv_count =
-            static_cast<size_t>(std::max(0, ::recvfrom(native_socket, reinterpret_cast<char*>(received_bytes.data()), received_bytes.size(),
+            static_cast<size_t>(std::max(ssize_t{0}, ::recvfrom(native_socket, reinterpret_cast<char*>(received_bytes.data()), received_bytes.size(),
                                                        0, reinterpret_cast<sockaddr*>(&src_address_info), &received_address_obj_size)));
 
         return std::pair{byte_span_t{received_bytes.data(), bytes_recv_count}, src_address_info};
