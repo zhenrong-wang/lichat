@@ -18,12 +18,14 @@ public:
         //std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
         //return converter.to_bytes(wstr);
         icu::UnicodeString ustr;
-        if (sizeof(wchar_t) == 2)
+        if constexpr (sizeof(wchar_t) == 2) {
             ustr = icu::UnicodeString(
                 reinterpret_cast<const UChar *>(wstr.data(), wstr.size()));
-        else
+        }
+        else {
             ustr = icu::UnicodeString::fromUTF32(
                 reinterpret_cast<const UChar32 *>(wstr.data()), wstr.size());
+        }
         std::string utf8_str;
         ustr.toUTF8String(utf8_str);
         return utf8_str;
