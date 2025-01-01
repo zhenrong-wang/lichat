@@ -26,15 +26,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: lukka/run-vcpkg@v11.5
 
-      - name: Install GCC14
+      - name: Install platform dependencies
         shell: bash
         run:  |
           sudo apt update
           sudo apt install gcc-14 g++-14 ninja-build libncursesw5-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 120 --slave /usr/bin/g++ g++ /usr/bin/g++-14 --slave /usr/bin/gcov gcov /usr/bin/gcov-14
 
-      - name: Resolve dependencies and configure
-        run: cmake --preset=x64-linux-debug
+      - name: Resolve build dependencies and configure
+        run: |
+          git pull
+          vcpkg update
+          cmake --preset=x64-linux-debug
 
       - name: Build
         run: cmake --build --preset=x64-linux-debug
