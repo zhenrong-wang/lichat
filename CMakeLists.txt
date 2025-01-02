@@ -19,22 +19,22 @@ set(PLATFORM_LIBS Threads::Threads)
 #
 # Compiler options
 #
-#    add_compile_options(
-#            -Wno-unknown-pragmas
-#            -Wall
-#            -Wextra
-#            -Werror
-#            -Wformat=2
-#            -Wmissing-declarations
-#            -Wunused
-#            -Wcast-align
-#            -Wfloat-equal
-#            -Wformat-security
-#            -Wconversion
-#            -Wpedantic
-#            -Wswitch
-#            -Wno-error=switch-default
-#    )
+add_compile_options(
+    -Wno-unknown-pragmas
+    -Wall
+    -Wextra
+    -Werror
+    -Wformat=2
+    -Wmissing-declarations
+    -Wunused
+    -Wcast-align
+    -Wfloat-equal
+    -Wformat-security
+    -Wconversion
+    -Wpedantic
+    -Wswitch
+    -Wno-error=switch-default
+)
 
 ###################################################################################################
 #

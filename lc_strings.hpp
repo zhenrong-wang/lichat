@@ -7,6 +7,8 @@
 #ifndef LC_STRINGS_HPP
 #define LC_STRINGS_HPP
 
+#include "lc_common.hpp"
+
 #include <unicode/unistr.h>
 #include <unicode/ucnv.h>
 #include <unicode/ustring.h>
@@ -19,12 +21,12 @@ public:
         //return converter.to_bytes(wstr);
         icu::UnicodeString ustr;
         if constexpr (sizeof(wchar_t) == 2) {
-            ustr = icu::UnicodeString(
-                reinterpret_cast<const UChar *>(wstr.data(), wstr.size()));
+            ustr = icu::UnicodeString{
+                reinterpret_cast<const UChar *>(wstr.data()), lc_utils::checked_static_cast<int32_t>(wstr.size())};
         }
         else {
             ustr = icu::UnicodeString::fromUTF32(
-                reinterpret_cast<const UChar32 *>(wstr.data()), wstr.size());
+                reinterpret_cast<const UChar32 *>(wstr.data()), lc_utils::checked_static_cast<int32_t>(wstr.size()));
         }
         std::string utf8_str;
         ustr.toUTF8String(utf8_str);
@@ -42,7 +44,7 @@ public:
             if (U_FAILURE(uerr))
                 return L"";
             wstr.resize(required_size);
-            u_strToWCS(&wstr[0], wstr.size(), nullptr, ustr.getBuffer(), 
+            u_strToWCS(&wstr[0], lc_utils::checked_static_cast<int32_t>(wstr.size()), nullptr, ustr.getBuffer(),
                        ustr.length(), &uerr);
             if (U_FAILURE(uerr))
                 return L"";
@@ -51,7 +53,7 @@ public:
         else {
             int32_t capacity = ustr.countChar32();
             wstr.resize(capacity);
-            ustr.toUTF32((UChar32 *)(wstr.data()), capacity, uerr);
+            ustr.toUTF32(reinterpret_cast<UChar32 *>(wstr.data()), capacity, uerr);
             return wstr;
         }
     }

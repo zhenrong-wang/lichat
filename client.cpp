@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <utility>
 #include <vector>
 #include <cstring>    
 #include <algorithm> 
@@ -136,35 +137,35 @@ public:
         return unique_email;
     }
 
-    const std::string& get_uname () const {
+    [[nodiscard]] const std::string& get_uname () const {
         return unique_name;
     }
 
-    const bool get_suffix_flag () const {
+    [[nodiscard]] bool get_suffix_flag () const {
         return with_random_suffix;
     }
 };
 
 class client_server_pk_mgr {
     std::string server_pk_dir;
-    std::array<uint8_t, crypto_box_PUBLICKEYBYTES> server_crypto_pk;
-    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> server_sign_pk;
+    std::array<uint8_t, crypto_box_PUBLICKEYBYTES> server_crypto_pk{};
+    std::array<uint8_t, crypto_sign_PUBLICKEYBYTES> server_sign_pk{};
     bool status;
 
 public:
     client_server_pk_mgr () : server_pk_dir(default_key_dir), status(false) {}
-    client_server_pk_mgr (const std::string& dir) : server_pk_dir(dir), 
+    explicit client_server_pk_mgr (std::string  dir) : server_pk_dir(std::move(dir)),
         status(false) {}
 
     void set_dir (const std::string& dir) {
         server_pk_dir = dir;
     }
 
-    const std::string& get_dir () const {
+    [[nodiscard]] const std::string& get_dir () const {
         return server_pk_dir;
     }
 
-    bool read_server_pk (void) {
+    bool read_server_pk () {
         std::vector<uint8_t> server_spk(crypto_sign_PUBLICKEYBYTES), 
                              server_cpk(crypto_box_PUBLICKEYBYTES);
         std::string server_spk_file = server_pk_dir + 
@@ -239,13 +240,13 @@ public:
         return server_sign_pk;
     }
 
-    const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& 
+    [[nodiscard]] const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>&
         get_server_cpk () const {
 
         return server_crypto_pk;
     }
 
-    const bool is_ready () const {
+     [[nodiscard]] bool is_ready () const {
         return status;  // If true, good to go, othersize not.
     }
 };
@@ -282,7 +283,7 @@ public:
         is_server_key_req = server_key_req;
     }
 
-    const bool requested_server_key () {
+    [[nodiscard]] bool requested_server_key () const {
         return is_server_key_req;
     }
 
@@ -467,14 +468,14 @@ public:
         auto status = getaddrinfo(addr_str.c_str(), nullptr, &hints, &res);
         if (status != 0)
             return false;
-        struct sockaddr_in *first = (sockaddr_in *)res->ai_addr;
+        const auto *first = reinterpret_cast<sockaddr_in*>(res->ai_addr);
         inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), 
-                    first_ipv4_addr.size());
+                    lc_utils::checked_static_cast<socklen_t>(first_ipv4_addr.size()));
         freeaddrinfo(res);
         return true;
     }
 
-    // This pass doesnt change the original pass string !
+    // This pass doesn't change the original pass string !
     static bool pass_hash_dryrun (const std::string& password, 
         std::array<char, crypto_pwhash_STRBYTES>& hashed_pwd) {
         auto ret = 
@@ -489,7 +490,7 @@ public:
     }
 
     bool set_server_addr (std::string& addr_str, std::string& port_str) {
-        std::array<char, INET_ADDRSTRLEN> ipv4_addr;
+        std::array<char, INET_ADDRSTRLEN> ipv4_addr{};
         uint16_t port_num;
         if (!get_addr_info(addr_str, ipv4_addr) || 
             !lc_utils::string_to_u16(port_str, port_num)) 
@@ -501,7 +502,7 @@ public:
         return true;
     }
 
-    std::string parse_server_auth_error (const uint8_t err_code) {
+    static std::string parse_server_auth_error (const uint8_t err_code) {
         if (err_code == 1)
             return "E-mail format error.";
         else if (err_code == 3)
@@ -528,7 +529,7 @@ public:
             return "Unknown server error.";
     }
 
-    std::string parse_core_err (const int& core_err) {
+    static std::string parse_core_err (const int& core_err) {
         if (core_err == C_NORMAL_RETURN) 
             return "Thread exit normally / gracefully.";
         else if (core_err == C_SOCK_FD_INVALID)
@@ -545,7 +546,7 @@ public:
             return "Unknown thread error. Possibly a bug.";
     }
 
-    bool nonblock_socket () {
+    bool nonblock_socket () const {
         int flags = fcntl(client_fd, F_GETFL, 0);
         if (flags == -1)
             return false;
@@ -555,7 +556,7 @@ public:
         return true;
     }
 
-    static int simple_send_stc (const int fd, const client_session& curr_s, 
+    static ssize_t simple_send_stc (const int fd, const client_session& curr_s,
         const uint8_t *buf, size_t n) {
         auto addr = curr_s.get_src_addr();
         return sendto(fd, buf, n, 0, (const struct sockaddr*)(&addr), 
@@ -566,7 +567,7 @@ public:
     //          cinfo_hash +
     //          aes_nonce + 
     //          aes_gcm_encrypted (sid + msg_body)
-    static int simple_secure_send_stc (const int fd, const uint8_t header, 
+    static ssize_t simple_secure_send_stc (const int fd, const uint8_t header,
         const client_session& curr_s, msg_buffer& buff,
         const uint8_t *raw_msg, const size_t raw_n) {
             
@@ -589,7 +590,7 @@ public:
         auto cif_bytes = lc_utils::u64_to_bytes(cif);
         auto sid = curr_s.get_server_sid();
 
-        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
+        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce{};
         size_t offset = 0, aes_enc_len = 0;
 
         // Padding the first byte
@@ -612,7 +613,7 @@ public:
                     buff.send_aes_buffer.begin() + sid.size());
         }
         // Record the buffer occupied size.
-        buff.send_aes_bytes = sid.size() + raw_bytes;
+        buff.send_aes_bytes = lc_utils::checked_static_cast<ssize_t>(sid.size() + raw_bytes);
 
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
@@ -620,10 +621,10 @@ public:
             reinterpret_cast<unsigned long long *>(&aes_enc_len),
             reinterpret_cast<const uint8_t *>(buff.send_aes_buffer.data()),
             buff.send_aes_bytes, 
-            NULL, 0, NULL, 
+            nullptr, 0, nullptr,
             client_aes_nonce.data(), aes_key.data()
         );
-        buff.send_bytes = offset + aes_enc_len;
+        buff.send_bytes = lc_utils::checked_static_cast<ssize_t>(offset + aes_enc_len);
         if (res != 0) 
             return -5;
         auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), 
@@ -633,8 +634,8 @@ public:
         return ret;
     }
 
-    static int simple_sign_send_stc (const int fd, const uint8_t header, 
-        const client_session& curr_s, key_mgr_25519 k, msg_buffer& buff,
+    static ssize_t simple_sign_send_stc (const int fd, const uint8_t header,
+        const client_session& curr_s, const key_mgr_25519& k, msg_buffer& buff,
         const uint8_t *raw_msg, const size_t raw_n) {
         
         bool raw_msg_empty = false;
@@ -667,7 +668,7 @@ public:
 
         auto res = crypto_sign(buff.send_buffer.begin() + offset,
                    &sign_len, cif_msg.data(), cif_msg.size(), sign_sk.data());
-        buff.send_bytes = offset + sign_len;
+        buff.send_bytes = lc_utils::checked_static_cast<ssize_t>(offset + sign_len);
         if (res != 0) 
             return -7;
         auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), 
@@ -1036,20 +1037,21 @@ public:
         return true;
     }
 
-    std::vector<uint8_t> assemble_user_info(const bool is_signup, 
+    static std::vector<uint8_t> assemble_user_info(const bool is_signup,
         const bool is_login_uemail, const std::string& uemail, 
         const std::string& uname, const std::string& password) {
 
-        size_t vec_size = 0, offset = 0;
+        size_t vec_size = 0;
+        auto offset = std::vector<uint8_t>::difference_type{0};
         if (is_signup) {
             vec_size = 1 + 1 + uemail.size() + 1 + uname.size() + 
                        1 + password.size() + 1;
             std::vector<uint8_t> vec(vec_size, 0x00);
             offset += 2;
             vec.insert(vec.begin() + offset, uemail.begin(), uemail.end());
-            offset += (uemail.size() + 1);
+            offset += lc_utils::checked_static_cast<decltype(offset)>(uemail.size() + 1);
             vec.insert(vec.begin() + offset, uname.begin(), uname.end());
-            offset += (uname.size() + 1);
+            offset += lc_utils::checked_static_cast<decltype(offset)>(uname.size() + 1);;
             vec.insert(vec.begin() + offset, password.begin(), password.end());
             return vec;
         }   
@@ -1063,24 +1065,24 @@ public:
             vec[1] = 0x00;
             offset += 2;
             vec.insert(vec.begin() + offset, uemail.begin(), uemail.end());
-            offset += uemail.size() + 1;
+            offset += lc_utils::checked_static_cast<decltype(offset)>(uemail.size() + 1);
         }
         else {
             vec[1] = 0x01;
             offset += 2;
             vec.insert(vec.begin() + offset, uname.begin(), uname.end());
-            offset += uname.size() + 1;
+            offset += lc_utils::checked_static_cast<decltype(offset)>(uname.size() + 1);
         }
         vec.insert(vec.begin() + offset, password.begin(), password.end());
         return vec;
     }
 
-    void print_menu (void) {
+    static void print_menu () {
         std::cout << main_menu << std::endl;
     }
 
-    int simple_send (const client_session& curr_s, 
-        const uint8_t *buf, size_t n) {
+    ssize_t simple_send (const client_session& curr_s,
+        const uint8_t *buf, size_t n) const {
         auto addr = curr_s.get_src_addr();
         return sendto(client_fd, buf, n, 0, 
                         (const struct sockaddr*)(&addr), sizeof(addr));
@@ -1091,7 +1093,7 @@ public:
     //          cinfo_hash +
     //          aes_nonce + 
     //          aes_gcm_encrypted (sid + msg_body)
-    int simple_secure_send (const uint8_t header, const client_session& curr_s, 
+    ssize_t simple_secure_send (const uint8_t header, const client_session& curr_s,
         const uint8_t *raw_msg, size_t raw_n) {
             
         if (curr_s.get_status() == 0 || curr_s.get_status() == 1) 
@@ -1114,7 +1116,7 @@ public:
         auto cif_bytes = lc_utils::u64_to_bytes(cif);
         auto sid = curr_s.get_server_sid();
 
-        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce;
+        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> client_aes_nonce{};
         size_t offset = 0, aes_enc_len = 0;
 
         // Padding the first byte
@@ -1139,7 +1141,7 @@ public:
                     buffer.send_aes_buffer.begin() + sid.size());
         }
         // Record the buffer occupied size.
-        buffer.send_aes_bytes = sid.size() + raw_bytes;
+        buffer.send_aes_bytes = lc_utils::checked_static_cast<ssize_t>(sid.size() + raw_bytes);
 
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
@@ -1147,10 +1149,10 @@ public:
             reinterpret_cast<unsigned long long *>(&aes_enc_len),
             reinterpret_cast<const uint8_t *>(buffer.send_aes_buffer.data()),
             buffer.send_aes_bytes, 
-            NULL, 0, NULL, 
+            nullptr, 0, nullptr,
             client_aes_nonce.data(), aes_key.data()
         );
-        buffer.send_bytes = offset + aes_enc_len;
+        buffer.send_bytes = lc_utils::checked_static_cast<ssize_t>(offset + aes_enc_len);
         if (res != 0) 
             return -5;
         auto ret = simple_send(curr_s, buffer.send_buffer.data(), 

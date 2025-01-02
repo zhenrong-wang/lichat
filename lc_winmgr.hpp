@@ -268,7 +268,7 @@ public:
     bool refresh_input (const std::string& prompt, const input_wbuff& input) {
         if (bottom_win == nullptr) return false;
         int w = getmaxx(bottom_win);
-        int start_y = prompt.size() / w, start_x = prompt.size() % w;
+        int start_y = lc_utils::checked_static_cast<int>(prompt.size()) / w, start_x = lc_utils::checked_static_cast<int>(prompt.size()) % w;
         wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
         mvwprintw(bottom_win, start_y, start_x, "%s [%d]  %s", 
@@ -356,17 +356,17 @@ public:
         // Handle multiple line input.
         // All lines would be left aligned.
         struct split {
-            size_t pos;
+            int32_t pos;
             int pdn;    // 0: nothing, 1: suffix, 2: 1 byte + suffix
-            split (size_t p, int flag) : pos(p), pdn(flag) {}
+            split (int32_t p, int flag) : pos{p}, pdn{flag} {}
         };
         utf8_out.clear();
-        std::vector<struct split> splits;
-        int len_tmp = 0;
-        splits.push_back(split(0, 0));
+        std::vector<split> splits;
+        int32_t len_tmp = 0;
+        splits.emplace_back(0, 0);
         for (int32_t i = 0; i < ustr.length(); ) {
             if (ustr.char32At(i) == '\n' || ustr.char32At(i) == '\r') {
-                splits.push_back(split(i + 1, 0));
+                splits.emplace_back(i + 1, 0);
                 len_tmp = 0;
                 i = ustr.moveIndex32(i, 1);
                 continue;
@@ -375,9 +375,9 @@ public:
                             ((ustr.char32At(i) <= (UChar32)0x7FF) ? 1 : 2);
             if (len_tmp + char_pw > line_len) {
                 if (len_tmp + char_pw - line_len == char_pw)
-                    splits.push_back(split(i, 1));
+                    splits.emplace_back(i, 1);
                 else 
-                    splits.push_back(split(i, 2));
+                    splits.emplace_back(i, 2);
                 len_tmp = char_pw;
             }
             else {
@@ -419,14 +419,13 @@ public:
         if (bare_msg.empty() || from_user.empty() || timestamp.empty())
             return false;
 
-        int height = 0, width = 0;
-
         // Important: before running the tui, we have checked the width is >=
         // min_width, which is 48. So the top_win width should be at least 32.
         // So the self_col_start >= 16; other_col_end >= 24.
         // So the construction of std::string(size, char) should work because
         // the provided size are positive. Although without strict check.
-        getmaxyx(top_win, height, width);
+        const auto width = getmaxx(top_win);
+
         int col_start, col_end;
         std::string fmt_name, fmt_timestmp, fmt_msg;
         bool left_align = true;
