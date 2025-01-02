@@ -33,7 +33,7 @@ public:
         key_dir = dir;
     }
 
-    void set_key_dir (const std::string& dir, const std::string& pref) {
+    void set_key_dir (const std::string&, const std::string& pref) {
         prefix = pref;
     }
 

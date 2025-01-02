@@ -218,7 +218,7 @@ public:
             return &(*it).second;
         return nullptr;
     }
-    const bool is_session_stored (uint64_t key) {
+    bool is_session_stored (uint64_t key) {
         return (get_session(key) != nullptr);
     }
 
@@ -275,10 +275,10 @@ public:
     ctx_item () : ctx_status(0) {
         ctx_uid.clear();
     }
-    const std::string& get_bind_uid () const {
+    [[nodiscard]] const std::string& get_bind_uid () const {
         return ctx_uid;
     }
-    const int get_status () const {
+    [[nodiscard]] int get_status () const {
         return ctx_status;
     }
     void set_bind_uid (const std::string& uid) {
@@ -848,25 +848,25 @@ public:
     }
 
     // Simplify the socket send function.
-    int simple_send (const uint64_t& cinfo_hash, const uint8_t *msg, size_t n) {
+    ssize_t simple_send (const uint64_t& cinfo_hash, const uint8_t *msg, size_t n) {
         auto p_conn = conns.get_session(cinfo_hash);
         if (p_conn == nullptr)
             return -3; // Invalid cinfo_hash
         auto addr = p_conn->get_src_addr();
-        return sendto(server_fd, msg, n, MSG_CONFIRM, (struct sockaddr *)&addr, 
+        return sendto(server_fd, msg, n, MSG_CONFIRM, (struct sockaddr *)&addr,
                         sizeof(addr));
     }
 
     // Simplify the socket send function.
-    int simple_send (const struct sockaddr_in& addr, const uint8_t *msg, 
-        size_t n) {
+    ssize_t simple_send (const struct sockaddr_in& addr, const uint8_t *msg,
+        size_t n) const {
 
         return sendto(server_fd, msg, n, MSG_CONFIRM, 
                      (struct sockaddr *)&addr, sizeof(addr));
     }
 
     // Simplify the socket send function.
-    int simple_send (uint8_t header, const struct sockaddr_in& addr, 
+    ssize_t simple_send (uint8_t header, const struct sockaddr_in& addr,
         const uint8_t *msg, size_t n) {
 
         if (n + 1 > buffer.send_buffer.size()) {
@@ -887,8 +887,9 @@ public:
     ssize_t simple_secure_send (const uint8_t header, const uint64_t cif, 
         const uint8_t *raw_msg, size_t raw_n) {
 
-        std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> server_aes_nonce;
-        size_t offset = 0, aes_encrypted_len = 0;
+        auto server_aes_nonce = std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES>{};
+        ssize_t offset = 0;
+        size_t aes_encrypted_len = 0;
         auto conn = conns.get_session(cif);
         if (conn == nullptr)
             return -1;
@@ -909,8 +910,7 @@ public:
         
         if (header == 0x00) {
             // server_sign_key + signed(server_publick_key)
-            std::array<uint8_t, crypto_sign_BYTES + crypto_box_PUBLICKEYBYTES> 
-                signed_server_cpk;
+            auto signed_server_cpk = std::array<uint8_t, crypto_sign_BYTES + crypto_box_PUBLICKEYBYTES>{};
 
             if (!lc_utils::sign_crypto_pk(key_mgr, signed_server_cpk)) {
                 buffer.send_bytes = offset;
@@ -927,7 +927,7 @@ public:
         else if (header == 0x01) { // Verify the signature.
             unsigned long long signed_len = 0;
             auto sign_sk = key_mgr.get_sign_sk();
-            std::array<uint8_t, crypto_sign_BYTES + sizeof(ok)> signed_ok;
+            auto signed_ok = std::array<uint8_t, crypto_sign_BYTES + sizeof(ok)>{};
             if (crypto_sign(signed_ok.data(), &signed_len, ok, sizeof(ok), 
                 sign_sk.data()) != 0) {
 
@@ -1019,13 +1019,13 @@ public:
         return ret;
     }
 
-    int notify_reset_conn (uint64_t& cinfo_hash, const uint8_t *msg, 
+    int notify_reset_conn (uint64_t& cinfo_hash, const uint8_t *msg,
         size_t size_of_msg, bool clean_client) {
 
         auto ret1 = simple_send(cinfo_hash, msg, size_of_msg);
         auto ret2 = simple_send(cinfo_hash, reinterpret_cast<const uint8_t *>
                                 (connection_reset), sizeof(connection_reset));
-        int ret3 = 1;
+        ssize_t ret3 = 1;
         if (clean_client) {
             clients.get_ctx(cinfo_hash)->clear_ctx();
         } 
