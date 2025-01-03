@@ -270,7 +270,7 @@ public:
             return false;   // Still has missing chunks.
         recv_chunks_ordered.clear();
         recv_chunks_ordered.resize(recv_chunks.size());
-        for (const auto it : recv_chunks)
+        for (const auto& it : recv_chunks)
             recv_chunks_ordered[it.first] = it.second;
         return true;
     }
@@ -281,7 +281,7 @@ class lmsg_recv_pool {
     std::vector<uint64_t> trash;
 
 public:
-    lmsg_recv_pool () {}
+    lmsg_recv_pool () = default;
 
     // -1 : size error
     // -3 : discarded
@@ -378,7 +378,7 @@ public:
         msg_id_bytes = lc_utils::u64_to_bytes(msg_id);
     }
 
-    const uint64_t get_msg_id () const {
+    uint64_t get_msg_id () const {
         return msg_id;
     }
 

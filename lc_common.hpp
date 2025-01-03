@@ -27,10 +27,43 @@
 #endif
 #include <arpa/inet.h>
 #include <chrono>
+#include <concepts>
 
 namespace lc_utils {
+    template <std::integral Result_T, std::integral Arg_T>
+    auto checked_static_cast(Arg_T arg) -> Result_T
+    {
+        if constexpr (std::is_signed_v<Result_T> and std::is_signed_v<Arg_T>) {
+            if (arg > std::numeric_limits<Result_T>::max()) {
+                throw std::out_of_range{"cast overflows target value upper bound"};
+            }
+            if (arg < std::numeric_limits<Result_T>::min()) {
+                throw std::out_of_range{"cast underflows value lower bound"};
+            }
+        }
+        else if constexpr (std::is_unsigned_v<Result_T> and std::is_signed_v<Arg_T>) {
+            if (arg < 0) {
+                throw std::out_of_range{"cast underflows value lower bound"};
+            }
+            if (static_cast<size_t>(arg) > std::numeric_limits<Result_T>::max()) {
+                throw std::out_of_range{"cast overflows target value upper bound"};
+            }
+        }
+        else if constexpr (std::is_signed_v<Result_T> and std::is_unsigned_v<Arg_T>) {
+            if (arg > static_cast<size_t>(std::numeric_limits<Result_T>::max())) {
+                throw std::out_of_range{"cast overflows target value upper bound"};
+            }
+        }
+        else {
+            if (static_cast<size_t>(arg) > std::numeric_limits<Result_T>::max()) {
+                throw std::out_of_range{"cast overflows target value upper bound"};
+            }
+        }
 
-    static uint64_t hash_client_info (const std::array<uint8_t, 
+        return static_cast<Result_T>(arg);
+    }
+
+    inline uint64_t hash_client_info (const std::array<uint8_t,
         CID_BYTES>& client_cid, 
         const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& 
         client_public_key) {
@@ -48,7 +81,7 @@ namespace lc_utils {
         return ret;
     }
 
-    static std::vector<std::string> split_buffer (const uint8_t *data, 
+    inline std::vector<std::string> split_buffer (const uint8_t *data,
         const size_t data_bytes, const uint8_t ch, const size_t max_items) {
         
         std::vector<std::string> ret;
@@ -75,33 +108,33 @@ namespace lc_utils {
         return ret;
     }
 
-    static std::array<uint8_t, 8> u64_to_bytes (uint64_t num) {
+    inline std::array<uint8_t, 8> u64_to_bytes (uint64_t num) {
         std::array<uint8_t, 8> ret;
         for (uint8_t i = 0; i < 8; ++ i) 
             ret[i] = static_cast<uint8_t>((num >> (i << 3)) & 0xFF);
         return ret;
     }
 
-    static uint64_t bytes_to_u64 (std::array<uint8_t, 8> arr) {
+    inline uint64_t bytes_to_u64 (std::array<uint8_t, 8> arr) {
         uint64_t num = 0;
         for (uint8_t i = 0; i < 8; ++ i)
             num |= (static_cast<uint64_t>(arr[i]) << (i << 3));
         return num;
     }
 
-    static std::array<uint8_t, 2> u16_to_bytes (uint16_t num) {
+    inline std::array<uint8_t, 2> u16_to_bytes (uint16_t num) {
         std::array<uint8_t, 2> ret;
         ret[0] = static_cast<uint8_t>(num & (0xFF));
         ret[1] = static_cast<uint8_t>((num >> 8) & (0xFF));
         return ret;
     }
 
-    static uint16_t bytes_to_u16 (std::array<uint8_t, 2> arr) {
+    inline uint16_t bytes_to_u16 (std::array<uint8_t, 2> arr) {
         return static_cast<uint16_t>(arr[0]) | 
                static_cast<uint16_t>(arr[1] << 8);
     }
 
-    static void generate_aes_nonce (
+    inline void generate_aes_nonce (
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES>& aes256gcm_nonce) {
         
         randombytes_buf(aes256gcm_nonce.data(), aes256gcm_nonce.size());
@@ -109,7 +142,7 @@ namespace lc_utils {
 
     // Only Alphabet, numbers, and special chars are allowed.
     // Length: 8-64
-    static int pass_fmt_check (const std::string& pass_str) {
+    inline int pass_fmt_check (const std::string& pass_str) {
         if (pass_str.size() < PASSWORD_MIN_BYTES || 
             pass_str.size() > PASSWORD_MAX_BYTES)
             return -1; // Length error.
@@ -138,7 +171,7 @@ namespace lc_utils {
 
     // Only Alphabet, numbers, and hyphen are allowed.
     // Length: 4-64
-    static int user_name_fmt_check (const std::string& uname) {
+    inline int user_name_fmt_check (const std::string& uname) {
         if (uname.size() < ULOGIN_MIN_BYTES || uname.size() > UNAME_MAX_BYTES)
             return -1; // Length error.
         if(uname == "system" || uname == "SYSTEM") // Reserved
@@ -151,7 +184,7 @@ namespace lc_utils {
         return 0; // Good to go.
     }
 
-    static int email_fmt_check (const std::string& email) {
+    inline int email_fmt_check (const std::string& email) {
         if (email.empty() || email.size() > UEMAIL_MAX_BYTES)
             return -1;
         std::regex email_regex
@@ -161,7 +194,7 @@ namespace lc_utils {
         return 0;
     }
 
-    static int calc_aes_key (
+    inline int calc_aes_key (
         std::array<uint8_t, crypto_aead_aes256gcm_KEYBYTES>& aes_key, 
         const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>& pk, 
         const std::array<uint8_t, crypto_box_SECRETKEYBYTES>& sk) {
@@ -169,12 +202,12 @@ namespace lc_utils {
         return crypto_box_beforenm(aes_key.data(), pk.data(), sk.data());
     }
 
-    static size_t calc_encrypted_len(const size_t raw_bytes) {
+    inline size_t calc_encrypted_len(const size_t raw_bytes) {
         return (1 + crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + CIF_BYTES + 
                 raw_bytes + crypto_aead_aes256gcm_ABYTES);
     }
 
-     static bool string_to_u16(const std::string& str, uint16_t& res) {
+     inline bool string_to_u16(const std::string& str, uint16_t& res) {
         if (str.size() > 5)
             return false;
         for (auto c : str) {
@@ -188,7 +221,7 @@ namespace lc_utils {
         return true;
     }
 
-    bool sign_crypto_pk(const key_mgr_25519& key_mgr, 
+    inline bool sign_crypto_pk(const key_mgr_25519& key_mgr,
         std::array<uint8_t, 
         crypto_sign_BYTES + crypto_box_PUBLICKEYBYTES>& signed_cpk) {
         
@@ -204,14 +237,14 @@ namespace lc_utils {
         return true;
     }
 
-    void print_array(const uint8_t *arr, const size_t n) {
+    inline void print_array(const uint8_t *arr, const size_t n) {
         printf("\n");
         for (size_t i = 0; i < n; ++ i) 
             printf("%x ", arr[i]);
         printf("\n %lu \n", n);
     }
 
-    static std::string now_time_to_str (void) {
+    inline std::string now_time_to_str () {
         auto now = std::chrono::system_clock::now();
         std::time_t now_t = std::chrono::system_clock::to_time_t(now);
         std::tm* now_tm = std::gmtime(&now_t);
@@ -224,7 +257,7 @@ namespace lc_utils {
         return oss.str();
     }
 
-    static std::string now_time_to_str (const time_t now_t) {
+    inline std::string now_time_to_str (const time_t now_t) {
         std::tm* now_tm = std::gmtime(&now_t);
         std::ostringstream oss;
         oss << (now_tm->tm_year + 1900) << '-' 
@@ -235,16 +268,16 @@ namespace lc_utils {
         return oss.str();
     }
 
-    static time_t now_time (void) {
+    inline time_t now_time () {
         auto now = std::chrono::system_clock::now();
         std::time_t now_t = std::chrono::system_clock::to_time_t(now);
         return now_t;
     }
-    std::string getpass_stdin (const std::string& prompt) {
+    inline std::string getpass_stdin (const std::string& prompt) {
         std::string p;
         char backspace = '\b', ch = '\0';
     #ifndef _WIN32
-        struct termios prev_term, new_term;
+        termios prev_term, new_term;
         char enter = '\n';
     #else
         char enter = '\r';
@@ -279,7 +312,7 @@ namespace lc_utils {
             else 
                 echo_disabled = true;
         }
-        while((ch = getchar()) != enter && p.size() <= PASSWORD_MAX_BYTES) {
+        while((ch = lc_utils::checked_static_cast<char>(getchar())) != enter && p.size() <= PASSWORD_MAX_BYTES) {
             if(ch != backspace && ch != '\t' && ch != ' ') 
                 p.push_back(ch);
             else if (ch == backspace) {
@@ -296,7 +329,7 @@ namespace lc_utils {
         return p;
     }
 
-    static std::vector<uint8_t> u16vec_to_u8 (const std::vector<uint16_t>& u16vec) {
+    inline std::vector<uint8_t> u16vec_to_u8 (const std::vector<uint16_t>& u16vec) {
         std::vector<uint8_t> ret(u16vec.size() * 2);
         for (size_t i = 0; i < u16vec.size(); ++ i) {
             ret[i * 2] = static_cast<uint8_t>(u16vec[i] & (0xFF));
@@ -305,7 +338,7 @@ namespace lc_utils {
         return ret;
     }
 
-    static std::vector<uint16_t> u8vec_to_u16 (const std::vector<uint8_t>& u8vec) {
+    inline std::vector<uint16_t> u8vec_to_u16 (const std::vector<uint8_t>& u8vec) {
         size_t size = (u8vec.size() % 2) ? (u8vec.size() / 2 + 1) :
                       (u8vec.size() / 2);
         std::vector<uint16_t> ret(size);
