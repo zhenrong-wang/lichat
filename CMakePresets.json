@@ -1,0 +1,187 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 26,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "vendor": {
+        "microsoft.com/VisualStudioSettings/CMake/1.0": {
+          "hostOS": [ "Windows" ]
+        }
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "x64-windows-debug",
+      "displayName": "x64 Windows Debug",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x64-windows-release",
+      "displayName": "x64 Windows Release",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "x86-windows-debug",
+      "displayName": "x86 Windows Debug",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "Win32",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x86-windows-release",
+      "displayName": "x86 Windows Release",
+      "inherits": "windows-base",
+      "architecture": {
+        "value": "Win32",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "x64-linux-debug",
+      "displayName": "x64 Linux Debug",
+      "inherits": "linux-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "x64-linux-release",
+      "displayName": "x64 Linux Release",
+      "inherits": "linux-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "x86-linux-debug",
+      "displayName": "x86 Linux Debug",
+      "inherits": "linux-base",
+      "architecture": {
+        "value": "x86",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "x86-linux-release",
+      "displayName": "x86 Linux Release",
+      "inherits": "linux-base",
+      "architecture": {
+        "value": "x86",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "x64-windows-debug",
+      "configurePreset": "x64-windows-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "x64-windows-release",
+      "configurePreset": "x64-windows-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "x86-windows-debug",
+      "configurePreset": "x86-windows-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "x86-windows-release",
+      "configurePreset": "x86-windows-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "x64-linux-debug",
+      "configurePreset": "x64-linux-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "x64-linux-release",
+      "configurePreset": "x64-linux-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "x86-linux-debug",
+      "configurePreset": "x86-linux-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "x86-linux-release",
+      "configurePreset": "x86-linux-release",
+      "configuration": "Release"
+    }
+  ]
+}
