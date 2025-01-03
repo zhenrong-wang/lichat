@@ -2,7 +2,7 @@ name: "Ubuntu | GCC 14 | x64 | Debug"
 
 on:
   push:
-    branches: [ "feature/cmake-vcpkg-github-ci" ]
+    branches: [ "main" ]
     paths:
       - '**.cpp'
       - '**.hpp'
@@ -12,7 +12,7 @@ on:
       - 'vcpkg.json'
       - 'vcpkg-configuration.json'
   pull_request:
-    branches: [ "feature/cmake-vcpkg-github-ci" ]
+    branches: [ "main" ]
     paths:
       - '**.cpp'
       - '**.hpp'
