@@ -259,7 +259,7 @@ public:
         if (w <= 0) 
             return;
         //int start_y = prompt.size() / w, start_x = prompt.size() % w;
-        mvwprintw(bottom_win, 0, 0, prompt.c_str());
+        mvwprintw(bottom_win, 0, 0, "%s", prompt.c_str());
         //wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
         wrefresh(bottom_win);
@@ -302,7 +302,7 @@ public:
         }
         int top_bar_w = getmaxx(top_bar);
         std::string blank(top_bar_w, ' ');
-        mvwprintw(top_bar, 0, 0, blank.c_str());
+        mvwprintw(top_bar, 0, 0, "%s", blank.c_str());
         mvwprintw(top_bar, 0, 0, "%s%s", top_bar_msg, win_name);
         wrefresh(top_bar);
     }
