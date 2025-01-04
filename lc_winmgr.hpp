@@ -28,13 +28,13 @@ constexpr int BOTTOM_HEIGHT_MAX = 12;
 constexpr int SIDE_WIDTH_MIN = ULOGIN_MIN_BYTES + 8;
 constexpr int SIDE_WIDTH_MAX = UNAME_MAX_BYTES + 8;
 
-constexpr char welcome[] = "Welcome to LightChat Service (aka LiChat)!\n\
+constexpr auto welcome = "Welcome to LightChat Service (aka LiChat)!\n\
 We support Free Software and Free Speech.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
-const std::string prompt = "Input: ";
-const std::string send_prompt = "([SHIFT][END] to send)";
-const std::string top_bar_msg = 
+constexpr auto prompt = "Input: ";
+constexpr auto send_prompt = "([SHIFT][END] to send)";
+constexpr auto top_bar_msg =
     "LiChat: Free Software (LIC: MIT) for Free Speech.";
 
 /* These external variables should be defined in the client core code. */
@@ -181,14 +181,14 @@ public:
         scrollok(bottom_win, TRUE);
         scrollok(side_win, TRUE);
         auto set_color = set_win_color();
-        wprintw(top_bar, top_bar_msg.c_str());
+        wprintw(top_bar, "%s", top_bar_msg);
         wrefresh(top_bar);
         if (set_color != W_NORMAL_RETURN)
             wprintw(top_win, "%s\n[CLIENT]: Color not supported.\n", welcome);
         else
-            wprintw(top_win, welcome);
+            wprintw(top_win, "%s", welcome);
         wrefresh(top_win);
-        wprintw(bottom_win, prompt.c_str());
+        wprintw(bottom_win, "%s", prompt);
         wrefresh(bottom_win);
         wprintw(side_win, "Users: \n");
         wrefresh(side_win);
@@ -259,7 +259,7 @@ public:
         if (w <= 0) 
             return;
         //int start_y = prompt.size() / w, start_x = prompt.size() % w;
-        mvwprintw(bottom_win, 0, 0, prompt.c_str());
+        mvwprintw(bottom_win, 0, 0, "%s", prompt.c_str());
         //wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
         wrefresh(bottom_win);
@@ -271,15 +271,15 @@ public:
         int start_y = lc_utils::checked_static_cast<int>(prompt.size()) / w, start_x = lc_utils::checked_static_cast<int>(prompt.size()) % w;
         wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
-        mvwprintw(bottom_win, start_y, start_x, "%s [%d]  %s", 
+        mvwprintw(bottom_win, start_y, start_x, "%s [%lu]  %s",
                   lc_strings::wstr_to_utf8(input.wstr).c_str(), 
-                  input.wstr.size(), send_prompt.c_str());
+                  input.wstr.size(), send_prompt);
         wrefresh(bottom_win);
         return true;
     }
 
     void switch_focused_win () {
-        std::string win_name;
+        const char* win_name = "";
         if (focused_win == nullptr) {
             focused_win = top_bar;
             win_name = "  (focused: top_bar)";
@@ -302,8 +302,8 @@ public:
         }
         int top_bar_w = getmaxx(top_bar);
         std::string blank(top_bar_w, ' ');
-        mvwprintw(top_bar, 0, 0, blank.c_str());
-        mvwprintw(top_bar, 0, 0, "%s%s", top_bar_msg.c_str(), win_name.c_str());
+        mvwprintw(top_bar, 0, 0, "%s", blank.c_str());
+        mvwprintw(top_bar, 0, 0, "%s%s", top_bar_msg, win_name);
         wrefresh(top_bar);
     }
 
@@ -460,7 +460,7 @@ public:
     }
 
     void wprint_to_output (const std::string& msg) {
-        wprintw(top_win, msg.c_str());
+        wprintw(top_win, "%s", msg.c_str());
         wrefresh(top_win);
     }
 
