@@ -82,6 +82,10 @@ Run the server with something like:
 ```shell
 ./server
 ```
+You can specify a port to listen.
+```shell
+./server PORT_NUMBER
+```
 The port number would be displayed in your `STDOUT`
 
 Once the server is running, the run the client(s):
@@ -89,7 +93,10 @@ Once the server is running, the run the client(s):
 ./client
 ```
 
-It would connect to localhost by default, but you can also specify a domain name and a port.
+You can specify an address (IP address or domain name) and a port to connect.
+```shell
+./client IP_ADDRESS PORT
+```
 
 ### 3.5 How To Chat
 
