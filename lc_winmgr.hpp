@@ -29,13 +29,13 @@ constexpr int SIDE_WIDTH_MIN = ULOGIN_MIN_BYTES + 8;
 constexpr int SIDE_WIDTH_MAX = UNAME_MAX_BYTES + 8;
 
 constexpr auto welcome = "Welcome to LightChat Service (aka LiChat)!\n\
-We support Free Software and Free Speech.\n\
+We support Free Software and Secure Communication.\n\
 Code: https://github.com/zhenrong-wang/lichat\n";
 
 constexpr auto prompt = "Input: ";
 constexpr auto send_prompt = "([SHIFT][END] to send)";
 constexpr auto top_bar_msg =
-    "LiChat: Free Software (LIC: MIT) for Free Speech.";
+    "LiChat: Free Software (LIC: MIT) for Secure Communication.";
 
 /* These external variables should be defined in the client core code. */
 extern std::atomic<bool> send_msg_req;
@@ -268,7 +268,8 @@ public:
     bool refresh_input (const std::string& prompt, const input_wbuff& input) {
         if (bottom_win == nullptr) return false;
         int w = getmaxx(bottom_win);
-        int start_y = lc_utils::checked_static_cast<int>(prompt.size()) / w, start_x = lc_utils::checked_static_cast<int>(prompt.size()) % w;
+        int start_y = lc_utils::lc_static_cast<int>(prompt.size()) / w, 
+            start_x = lc_utils::lc_static_cast<int>(prompt.size()) % w;
         wmove(bottom_win, start_y, start_x);
         wclrtobot(bottom_win);
         mvwprintw(bottom_win, start_y, start_x, "%s [%lu]  %s",
