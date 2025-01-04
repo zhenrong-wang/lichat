@@ -470,7 +470,7 @@ public:
             return false;
         const auto *first = reinterpret_cast<sockaddr_in*>(res->ai_addr);
         inet_ntop(AF_INET, &(first->sin_addr), first_ipv4_addr.data(), 
-                    lc_utils::checked_static_cast<socklen_t>(first_ipv4_addr.size()));
+                    lc_utils::lc_static_cast<socklen_t>(first_ipv4_addr.size()));
         freeaddrinfo(res);
         return true;
     }
@@ -613,7 +613,7 @@ public:
                     buff.send_aes_buffer.begin() + sid.size());
         }
         // Record the buffer occupied size.
-        buff.send_aes_bytes = lc_utils::checked_static_cast<ssize_t>(sid.size() + raw_bytes);
+        buff.send_aes_bytes = lc_utils::lc_static_cast<ssize_t>(sid.size() + raw_bytes);
 
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
@@ -624,7 +624,7 @@ public:
             nullptr, 0, nullptr,
             client_aes_nonce.data(), aes_key.data()
         );
-        buff.send_bytes = lc_utils::checked_static_cast<ssize_t>(offset + aes_enc_len);
+        buff.send_bytes = lc_utils::lc_static_cast<ssize_t>(offset + aes_enc_len);
         if (res != 0) 
             return -5;
         auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), 
@@ -668,7 +668,7 @@ public:
 
         auto res = crypto_sign(buff.send_buffer.begin() + offset,
                    &sign_len, cif_msg.data(), cif_msg.size(), sign_sk.data());
-        buff.send_bytes = lc_utils::checked_static_cast<ssize_t>(offset + sign_len);
+        buff.send_bytes = lc_utils::lc_static_cast<ssize_t>(offset + sign_len);
         if (res != 0) 
             return -7;
         auto ret = simple_send_stc(fd, curr_s, buff.send_buffer.data(), 
@@ -1049,9 +1049,9 @@ public:
             std::vector<uint8_t> vec(vec_size, 0x00);
             offset += 2;
             vec.insert(vec.begin() + offset, uemail.begin(), uemail.end());
-            offset += lc_utils::checked_static_cast<decltype(offset)>(uemail.size() + 1);
+            offset += lc_utils::lc_static_cast<decltype(offset)>(uemail.size() + 1);
             vec.insert(vec.begin() + offset, uname.begin(), uname.end());
-            offset += lc_utils::checked_static_cast<decltype(offset)>(uname.size() + 1);;
+            offset += lc_utils::lc_static_cast<decltype(offset)>(uname.size() + 1);;
             vec.insert(vec.begin() + offset, password.begin(), password.end());
             return vec;
         }   
@@ -1065,13 +1065,13 @@ public:
             vec[1] = 0x00;
             offset += 2;
             vec.insert(vec.begin() + offset, uemail.begin(), uemail.end());
-            offset += lc_utils::checked_static_cast<decltype(offset)>(uemail.size() + 1);
+            offset += lc_utils::lc_static_cast<decltype(offset)>(uemail.size() + 1);
         }
         else {
             vec[1] = 0x01;
             offset += 2;
             vec.insert(vec.begin() + offset, uname.begin(), uname.end());
-            offset += lc_utils::checked_static_cast<decltype(offset)>(uname.size() + 1);
+            offset += lc_utils::lc_static_cast<decltype(offset)>(uname.size() + 1);
         }
         vec.insert(vec.begin() + offset, password.begin(), password.end());
         return vec;
@@ -1141,7 +1141,7 @@ public:
                     buffer.send_aes_buffer.begin() + sid.size());
         }
         // Record the buffer occupied size.
-        buffer.send_aes_bytes = lc_utils::checked_static_cast<ssize_t>(sid.size() + raw_bytes);
+        buffer.send_aes_bytes = lc_utils::lc_static_cast<ssize_t>(sid.size() + raw_bytes);
 
         // AES encrypt and padding to the send_buffer.
         auto res = crypto_aead_aes256gcm_encrypt(
@@ -1152,7 +1152,7 @@ public:
             nullptr, 0, nullptr,
             client_aes_nonce.data(), aes_key.data()
         );
-        buffer.send_bytes = lc_utils::checked_static_cast<ssize_t>(offset + aes_enc_len);
+        buffer.send_bytes = lc_utils::lc_static_cast<ssize_t>(offset + aes_enc_len);
         if (res != 0) 
             return -5;
         auto ret = simple_send(curr_s, buffer.send_buffer.data(), 
@@ -1490,10 +1490,10 @@ public:
                                                crypto_box_PUBLICKEYBYTES;
 
                     if (buffer.recv_raw_bytes == expected_err_size) {
-                        if (std::memcmp(beg, server_fe_keyerr, 
-                            sizeof(server_fe_keyerr) == 0) || 
-                            std::memcmp(beg, server_fd_msgerr, 
-                            sizeof(server_fd_msgerr) == 0)) {
+                        if ((std::memcmp(beg, server_fe_keyerr, 
+                            sizeof(server_fe_keyerr)) == 0) || 
+                            (std::memcmp(beg, server_fd_msgerr, 
+                            sizeof(server_fd_msgerr)) == 0)) {
 
                             offset += 1 + ERR_CODE_BYTES;
                             std::copy(beg + offset, beg + offset + CIF_BYTES, 

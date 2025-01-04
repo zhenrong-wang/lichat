@@ -27,12 +27,23 @@
 #endif
 #include <arpa/inet.h>
 #include <chrono>
-#include <concepts>
+
+#if __cplusplus >= 202002L
+    #define __CPP20 1
+    #include <concepts>
+#else
+    #undef __CPP20
+#endif
 
 namespace lc_utils {
+
+// The lc_static_cast is an enhanced static_cast with type check and boundary
+// checks, but it needs C++20 support. If your compiler provide the built-in
+// MACRO __cplusplus and it is larger than 202002L, this function would be 
+// activated. Otherwise it would equal to a static_cast<>.
+#ifdef __CPP20
     template <std::integral Result_T, std::integral Arg_T>
-    auto checked_static_cast(Arg_T arg) -> Result_T
-    {
+    auto lc_static_cast (Arg_T arg) -> Result_T {
         if constexpr (std::is_signed_v<Result_T> and std::is_signed_v<Arg_T>) {
             if (arg > std::numeric_limits<Result_T>::max()) {
                 throw std::out_of_range{"cast overflows target value upper bound"};
@@ -62,6 +73,14 @@ namespace lc_utils {
 
         return static_cast<Result_T>(arg);
     }
+
+#else
+    // For compilers without C++20 support, this function would do nothing.
+    template <typename Result_T, typename Arg_T>
+    auto lc_static_cast(Arg_T arg) -> Result_T {
+        return static_cast<Result_T>(arg);
+    }
+#endif
 
     inline uint64_t hash_client_info (const std::array<uint8_t,
         CID_BYTES>& client_cid, 
@@ -312,7 +331,7 @@ namespace lc_utils {
             else 
                 echo_disabled = true;
         }
-        while((ch = lc_utils::checked_static_cast<char>(getchar())) != enter && p.size() <= PASSWORD_MAX_BYTES) {
+        while((ch = lc_utils::lc_static_cast<char>(getchar())) != enter && p.size() <= PASSWORD_MAX_BYTES) {
             if(ch != backspace && ch != '\t' && ch != ' ') 
                 p.push_back(ch);
             else if (ch == backspace) {

@@ -20,13 +20,15 @@ public:
         //std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
         //return converter.to_bytes(wstr);
         icu::UnicodeString ustr;
-        if constexpr (sizeof(wchar_t) == 2) {
+        if (sizeof(wchar_t) == 2) {
             ustr = icu::UnicodeString{
-                reinterpret_cast<const UChar *>(wstr.data()), lc_utils::checked_static_cast<int32_t>(wstr.size())};
+                reinterpret_cast<const UChar *>(wstr.data()), 
+                lc_utils::lc_static_cast<int32_t>(wstr.size())};
         }
         else {
             ustr = icu::UnicodeString::fromUTF32(
-                reinterpret_cast<const UChar32 *>(wstr.data()), lc_utils::checked_static_cast<int32_t>(wstr.size()));
+                reinterpret_cast<const UChar32 *>(wstr.data()), 
+                lc_utils::lc_static_cast<int32_t>(wstr.size()));
         }
         std::string utf8_str;
         ustr.toUTF8String(utf8_str);
@@ -44,8 +46,9 @@ public:
             if (U_FAILURE(uerr))
                 return L"";
             wstr.resize(required_size);
-            u_strToWCS(&wstr[0], lc_utils::checked_static_cast<int32_t>(wstr.size()), nullptr, ustr.getBuffer(),
-                       ustr.length(), &uerr);
+            u_strToWCS(&wstr[0], 
+                lc_utils::lc_static_cast<int32_t>(wstr.size()), 
+                nullptr, ustr.getBuffer(), ustr.length(), &uerr);
             if (U_FAILURE(uerr))
                 return L"";
             return wstr;
@@ -53,7 +56,11 @@ public:
         else {
             int32_t capacity = ustr.countChar32();
             wstr.resize(capacity);
-            ustr.toUTF32(reinterpret_cast<UChar32 *>(wstr.data()), capacity, uerr);
+            // We have to use the C style cast here because the wstr.data() is 
+            // const, while the toUTF32 method requires non-const.
+            // C style cast should be avoided but I really don't want to copy
+            // the wstr to another vector. That's unnecessary, technically.
+            ustr.toUTF32((UChar32 *)(wstr.data()), capacity, uerr);
             return wstr;
         }
     }
