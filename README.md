@@ -1,5 +1,7 @@
 # LiChat: A Light-Weight Web Chatroom Service in C++
 
+<img src="./img/chat_ui.png" alt="chat ui" style="width: 600px;"/>
+
 ## 1. Core Features
 
 LiChat is a light-weight chat room service. It provides many features:
