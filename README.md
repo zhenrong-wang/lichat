@@ -88,11 +88,10 @@ You can specify a port to listen.
 ```
 The port number would be displayed in your `STDOUT`
 
-Once the server is running, the run the client(s):
+Once the server is running, then run the client(s):
 ```shell
 ./client
 ```
-
 You can specify an address (IP address or domain name) and a port to connect.
 ```shell
 ./client IP_ADDRESS PORT
