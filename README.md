@@ -58,9 +58,14 @@ But the client (WIP) would work on different platforms.
 #### Direct compiler invocation
 If you want to just directly invoke the compiler (and have sorted out the dependencies mentioned above), then you can build (with GCC) using a command like:
 ```shell
-g++ server.cpp -lsodium -o server`
+g++ server.cpp -lsodium -o server
 g++ client.cpp -lsodium -lncursesw -licuuc -lpthread -o client`
 ```
+Or, you can just run the easy build shell script `./make_on_linux`, please note:
+
+- It only runs on GNU/Linux distros.
+- It would try to build both server and client, regardless of their dependencies.
+- It only detects g++ and clang++, other compilers are not accepted yet.
 
 #### CMake build
 If you have CMake, VCPKG and Ncurses installed (see above), then you can resolve the dependencies and build the code with
