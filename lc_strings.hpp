@@ -61,6 +61,8 @@ public:
             // C style cast should be avoided but I really don't want to copy
             // the wstr to another vector. That's unnecessary, technically.
             ustr.toUTF32((UChar32 *)(wstr.data()), capacity, uerr);
+            if (U_FAILURE(uerr))
+                return L"";
             return wstr;
         }
     }
