@@ -178,9 +178,9 @@ public:
                         crypto_sign_PUBLICKEYBYTES);
         if (res1 == 0 && res2 == 0) {
             std::copy(server_spk.begin(), server_spk.end(), 
-                        server_sign_pk.begin());
+                      server_sign_pk.begin());
             std::copy(server_cpk.begin(), server_cpk.end(), 
-                        server_crypto_pk.begin());
+                      server_crypto_pk.begin());
             status = true;
             return true;
         }
@@ -236,13 +236,11 @@ public:
 
     const std::array<uint8_t, crypto_sign_PUBLICKEYBYTES>& 
         get_server_spk () const {
-
         return server_sign_pk;
     }
 
     [[nodiscard]] const std::array<uint8_t, crypto_box_PUBLICKEYBYTES>&
         get_server_cpk () const {
-
         return server_crypto_pk;
     }
 
@@ -302,7 +300,7 @@ public:
         if (!server_pk_mgr.is_ready() || !client_key.is_activated()) 
             return -3;  // key_mgr not activated
         uint64_t cif_calc = lc_utils::hash_client_info(client_cid, 
-                            client_key.get_crypto_pk());
+                                            client_key.get_crypto_pk());
         uint64_t cif_recv = lc_utils::bytes_to_u64(cif_bytes);
         if (cif_calc != cif_recv) 
             return 1;  //  Need to report to server, msg error
@@ -599,18 +597,18 @@ public:
         
         // Padding the cinfo_hash
         std::copy(cif_bytes.begin(), cif_bytes.end(), 
-                    buff.send_buffer.begin() + offset);
+                  buff.send_buffer.begin() + offset);
         offset += cif_bytes.size();
 
         // Padding the aes_nonce
         lc_utils::generate_aes_nonce(client_aes_nonce);
         std::copy(client_aes_nonce.begin(), client_aes_nonce.end(), 
-                    buff.send_buffer.begin() + offset);
+                  buff.send_buffer.begin() + offset);
         offset += client_aes_nonce.size();
         std::copy(sid.begin(), sid.end(), buff.send_aes_buffer.begin());
         if (!raw_msg_empty) {
             std::copy(raw_msg, raw_msg + raw_bytes, 
-                    buff.send_aes_buffer.begin() + sid.size());
+                      buff.send_aes_buffer.begin() + sid.size());
         }
         // Record the buffer occupied size.
         buff.send_aes_bytes = lc_utils::lc_static_cast<ssize_t>(sid.size() + raw_bytes);
@@ -1125,20 +1123,20 @@ public:
         
         // Padding the cinfo_hash
         std::copy(cif_bytes.begin(), cif_bytes.end(), 
-                    buffer.send_buffer.begin() + offset);
+                  buffer.send_buffer.begin() + offset);
         offset += cif_bytes.size();
 
         // Padding the aes_nonce
         lc_utils::generate_aes_nonce(client_aes_nonce);
         std::copy(client_aes_nonce.begin(), client_aes_nonce.end(), 
-                    buffer.send_buffer.begin() + offset);
+                  buffer.send_buffer.begin() + offset);
         offset += client_aes_nonce.size();
 
         // Construct the raw message: sid + cif + msg_body
         std::copy(sid.begin(), sid.end(), buffer.send_aes_buffer.begin());
         if (!raw_msg_empty) {
             std::copy(raw_msg, raw_msg + raw_bytes, 
-                    buffer.send_aes_buffer.begin() + sid.size());
+                      buffer.send_aes_buffer.begin() + sid.size());
         }
         // Record the buffer occupied size.
         buffer.send_aes_bytes = lc_utils::lc_static_cast<ssize_t>(sid.size() + raw_bytes);
@@ -1156,7 +1154,7 @@ public:
         if (res != 0) 
             return -5;
         auto ret = simple_send(curr_s, buffer.send_buffer.data(), 
-                                buffer.send_bytes);
+                               buffer.send_bytes);
         if (ret < 0) 
             return -7;
         return ret;
@@ -1305,7 +1303,7 @@ public:
                     return close_client(MSG_SIGNING_FAILED);
 
                 std::copy(signed_cid_cpk.begin(), signed_cid_cpk.end(), 
-                            buffer.send_buffer.begin() + offset);
+                          buffer.send_buffer.begin() + offset);
                 buffer.send_bytes = offset + signed_cid_cpk.size();
                 simple_send(session, buffer.send_buffer.data(), 
                             buffer.send_bytes);
@@ -1497,11 +1495,11 @@ public:
 
                             offset += 1 + ERR_CODE_BYTES;
                             std::copy(beg + offset, beg + offset + CIF_BYTES, 
-                                        recved_cif_bytes.begin());
+                                      recved_cif_bytes.begin());
 
                             offset += CIF_BYTES;
                             std::copy(beg + offset, beg + offset + SID_BYTES, 
-                                        recved_server_sid.begin());
+                                      recved_server_sid.begin());
                             offset += SID_BYTES;
                             if (recved_cif_bytes == 
                                 session.get_cinfo_hash_bytes() && 
@@ -1581,9 +1579,9 @@ public:
                     continue;
                 auto aes_beg = buffer.recv_aes_buffer.begin();
                 std::copy(aes_beg, aes_beg + SID_BYTES, 
-                            recved_server_sid.begin());
+                          recved_server_sid.begin());
                 std::copy(aes_beg + SID_BYTES, aes_beg + SID_BYTES + CIF_BYTES, 
-                            recved_cif_bytes.begin());
+                          recved_cif_bytes.begin());
                 if (recved_cif_bytes != session.get_cinfo_hash_bytes() || 
                     recved_server_sid != session.get_server_sid())
                     continue;
