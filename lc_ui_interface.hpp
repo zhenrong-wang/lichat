@@ -29,8 +29,10 @@ struct chat_message {
     std::string content;         // Message content
     bool is_system;             // True if system message
     bool is_from_me;            // True if message is from current user
+    bool is_private;            // True if this is a private/group message (not broadcast)
+    std::vector<std::string> recipients;  // Recipient usernames (empty for broadcast)
     
-    chat_message() : is_system(false), is_from_me(false) {}
+    chat_message() : is_system(false), is_from_me(false), is_private(false) {}
 };
 
 struct user_list_entry {

@@ -38,9 +38,11 @@
  * 0x01: initial handshake
  * 0x02: AES validation
  * ----------
- * 0x10: encrypted message between server and client
+ * 0x10: encrypted message between server and client (with sequence number)
  * 0x11: signed broadcasting from server to all clients
  * 0x12: signed message from server to a specific client (currently not in use)
+ * ----------
+ * 0x17: encrypted ACK message (server->client, acknowledges 0x10 message)
  * ----------
  * 0x1F: signed heartbeat / goodbye message
  * ----------
@@ -271,10 +273,16 @@ class ctx_item {
                                 // 1 - signup or signin, auth info received (userid, password)
                                 //     public_msg + encrypted_msg(0 - signup, 1 - signin, 2 - signout)
                                 // 2 - signup or singin OK, good for messaging
+    
+    // Reliability: duplicate detection using sliding window
+    // Track last 64 sequence numbers to detect duplicates (replay protection)
+    std::array<bool, 64> seq_window;  // Bitmap for sequence numbers
+    uint16_t seq_window_base;         // Base sequence number for the window
 
 public:
-    ctx_item () : ctx_status(0) {
+    ctx_item () : ctx_status(0), seq_window_base(0) {
         ctx_uid.clear();
+        seq_window.fill(false);
     }
     [[nodiscard]] const std::string& get_bind_uid () const {
         return ctx_uid;
@@ -295,6 +303,44 @@ public:
     void clear_ctx () { // Clear everything
         ctx_uid.clear();
         ctx_status = 0;
+        seq_window.fill(false);
+        seq_window_base = 0;
+    }
+    
+    // Check if sequence number is duplicate (within sliding window)
+    // Returns true if duplicate, false if new
+    bool is_duplicate_seq(uint16_t seq) {
+        // Calculate distance from base
+        uint16_t distance;
+        if (seq >= seq_window_base) {
+            distance = seq - seq_window_base;
+        } else {
+            // Handle wrap-around: seq < base means it wrapped
+            distance = static_cast<uint16_t>((65535U - seq_window_base) + seq + 1);
+        }
+        
+        // If too far from base, advance window
+        if (distance >= 64) {
+            // Advance window to include this sequence number
+            uint16_t new_base = (seq >= 32) ? static_cast<uint16_t>(seq - 32) : 
+                                 static_cast<uint16_t>(65535U - (32 - seq));
+            seq_window.fill(false);
+            seq_window_base = new_base;
+            distance = (seq >= new_base) ? (seq - new_base) : 
+                       static_cast<uint16_t>((65535U - new_base) + seq + 1);
+        }
+        
+        // Check if already seen
+        if (distance < 64 && seq_window[distance]) {
+            return true;  // Duplicate
+        }
+        
+        // Mark as seen
+        if (distance < 64) {
+            seq_window[distance] = true;
+        }
+        
+        return false;  // New sequence number
     }
 };
 
@@ -1118,6 +1164,15 @@ public:
         uint64_t tmp;
         return get_cinfo_by_uid(tmp, user_uid);
     }
+    
+    // Get CIF by username (helper for targeted messaging)
+    bool get_cinfo_by_username (uint64_t& ret, const std::string& username) {
+        auto uemail_ptr = users.get_uemail_by_uname(username);
+        if (!uemail_ptr) {
+            return false;
+        }
+        return get_cinfo_by_uid(ret, *uemail_ptr);
+    }
 
     size_t broadcasting (const uint8_t *msg, const size_t msg_bytes) {
         if (1 + crypto_sign_BYTES + msg_bytes > BUFF_BYTES)
@@ -1164,55 +1219,131 @@ public:
         }
         return sent_out;
     }
+    
+    // Send message to specific client(s) by username(s)
+    // Returns number of successful sends
+    size_t secure_targeted_send (const uint8_t *msg, const size_t msg_bytes,
+                                 const std::vector<std::string>& recipient_usernames,
+                                 const std::string& exclude_sender_uid = "") {
+        if (lc_utils::calc_encrypted_len(msg_bytes) > BUFF_BYTES)
+            return 0;
+        size_t sent_out = 0;
+        
+        // Send to each recipient by username
+        for (const auto& username : recipient_usernames) {
+            uint64_t recipient_cif = 0;
+            if (get_cinfo_by_username(recipient_cif, username)) {
+                // Check if this is the sender (by UID)
+                auto recipient_ctx = clients.get_ctx(recipient_cif);
+                if (recipient_ctx && !exclude_sender_uid.empty() && 
+                    recipient_ctx->get_bind_uid() == exclude_sender_uid) {
+                    continue; // Skip sender (they'll get it via the all_recipients list)
+                }
+                
+                session_item *ptr_session = conns.get_session(recipient_cif);
+                if (ptr_session != nullptr) {
+                    if (recipient_ctx && recipient_ctx->get_status() == 2) {
+                        if (simple_secure_send(0x10, recipient_cif, msg, msg_bytes) >= 0) {
+                            ++ sent_out;
+                        }
+                    }
+                }
+            }
+        }
+        
+        return sent_out;
+    }
+    
+    // Parse message to extract recipient information
+    // Returns: (is_broadcast, recipient_list, message_content)
+    // Format: "BROADCAST|content" or "TO:user1,user2|content" or "content" (default broadcast)
+    // Uses '|' as separator between recipient prefix and content
+    static std::tuple<bool, std::vector<std::string>, std::string> 
+    parse_message_recipients(const std::string& message) {
+        // Check for explicit broadcast prefix
+        if (message.find("BROADCAST|") == 0) {
+            std::string content = message.substr(10); // Skip "BROADCAST|"
+            return std::make_tuple(true, std::vector<std::string>(), content);
+        }
+        
+        // Check for TO: prefix (private/group message)
+        if (message.find("TO:") == 0) {
+            size_t pipe_pos = message.find('|', 3); // Find '|' separator after "TO:"
+            if (pipe_pos != std::string::npos) {
+                std::string recipients_str = message.substr(3, pipe_pos - 3);
+                std::string content = message.substr(pipe_pos + 1);
+                
+                // Parse comma-separated recipient list
+                std::vector<std::string> recipients;
+                std::istringstream iss(recipients_str);
+                std::string recipient;
+                while (std::getline(iss, recipient, ',')) {
+                    if (!recipient.empty()) {
+                        recipients.push_back(recipient);
+                    }
+                }
+                
+                if (!recipients.empty()) {
+                    return std::make_tuple(false, recipients, content);
+                }
+            }
+        }
+        
+        // Default: broadcast (backward compatibility - no prefix means broadcast)
+        return std::make_tuple(true, std::vector<std::string>(), message);
+    }
 
     bool decrypt_recv_0x10raw_bytes (const size_t recved_raw_bytes, 
-        uint64_t& ret_cif) {
+        uint64_t& ret_cif, uint16_t& ret_seq) {
 
-        if (recved_raw_bytes < lc_utils::calc_encrypted_len(1))
+        if (recved_raw_bytes < lc_utils::calc_encrypted_len(SEQ_BYTES + 1))
             return false;
         size_t offset = 0; // Omit first byte 0x10.
-        auto header = buffer.recv_raw_buffer[0];
-        if (header != 0x10) 
-            return false;
-        ++ offset;
+        
+        // Extract CIF
         std::array<uint8_t, CIF_BYTES> cif_bytes;
+        std::copy(buffer.recv_raw_buffer.begin() + offset + 1,
+                 buffer.recv_raw_buffer.begin() + offset + 1 + CIF_BYTES,
+                 cif_bytes.begin());
+        ret_cif = lc_utils::bytes_to_u64(cif_bytes);
+        offset += 1 + CIF_BYTES;  // header + CIF
+        
+        // Extract nonce
         std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> aes_nonce;
-        auto beg = buffer.recv_raw_buffer.begin();
-        unsigned long long aes_decrypted_len = 0;
-        std::copy(beg + offset, beg + offset + CIF_BYTES, cif_bytes.begin());
-        offset += CIF_BYTES;
-        std::copy(beg + offset, beg + offset + crypto_aead_aes256gcm_NPUBBYTES, 
-                  aes_nonce.begin());
+        std::copy(buffer.recv_raw_buffer.begin() + offset,
+                 buffer.recv_raw_buffer.begin() + offset + crypto_aead_aes256gcm_NPUBBYTES,
+                 aes_nonce.begin());
         offset += crypto_aead_aes256gcm_NPUBBYTES;
-
-        auto cinfo_hash = lc_utils::bytes_to_u64(cif_bytes);
-        auto ptr_session = conns.get_session(cinfo_hash);
-        if (ptr_session == nullptr)
+        
+        // Decrypt
+        auto conn = conns.get_session(ret_cif);
+        if (conn == nullptr)
             return false;
-        if (ptr_session->get_status() != 2)
+        auto aes_key = conn->get_aes_gcm_key();
+        unsigned long long aes_dec_len = 0;
+        
+        if (crypto_aead_aes256gcm_decrypt(
+            buffer.recv_aes_buffer.data(), &aes_dec_len,
+            nullptr,
+            buffer.recv_raw_buffer.data() + offset, recved_raw_bytes - offset,
+            nullptr, 0,
+            aes_nonce.data(), aes_key.data()) != 0)
             return false;
-        auto aes_key = ptr_session->get_aes_gcm_key();
-        auto sid = ptr_session->get_server_sid();
-        auto ret = 
-            (crypto_aead_aes256gcm_decrypt(
-                buffer.recv_aes_buffer.begin(), &aes_decrypted_len, NULL,
-                beg + offset, recved_raw_bytes - offset,
-                NULL, 0,
-                aes_nonce.data(), aes_key.data()
-            ) == 0);
-        buffer.recv_aes_bytes = aes_decrypted_len;
-        if (aes_decrypted_len <= SID_BYTES)
+        
+        buffer.recv_aes_bytes = aes_dec_len;
+        
+        // Verify SID
+        auto sid = conn->get_server_sid();
+        if (aes_dec_len < SID_BYTES + SEQ_BYTES)
             return false;
-        if (ret) {
-            if (std::memcmp(buffer.recv_aes_buffer.begin(), sid.begin(), 
-                sid.size())==0) {
-
-                ret_cif = cinfo_hash;
-                return true;
-            }
+        if (std::memcmp(buffer.recv_aes_buffer.data(), sid.data(), SID_BYTES) != 0)
             return false;
-        }
-        return false;
+        
+        // Extract sequence number
+        ret_seq = (buffer.recv_aes_buffer[SID_BYTES] << 8) | 
+                  buffer.recv_aes_buffer[SID_BYTES + 1];
+        
+        return true;
     }
 
     std::string user_list_to_msg () {
@@ -1708,36 +1839,50 @@ public:
                     // Process the received long message
                     // Check if it's a regular chat message (not user list)
                     if (recved_lmsg_body.length() > 0) {
-                        // Parse and broadcast the message
-                        auto parsed = lc_utils::split_buffer(
-                            reinterpret_cast<const uint8_t *>(recved_lmsg_body.data()), 
-                            recved_lmsg_body.size(), ',', 4);
+                        // Parse recipient information from message
+                        auto [is_broadcast, recipients, message_content] = 
+                            parse_message_recipients(recved_lmsg_body);
                         
-                        if (parsed.size() >= 3) {
-                            // Regular chat message format: from_user,timestamp,content
-                            auto sender_ctx = clients.get_ctx(recved_cif);
-                            if (sender_ctx && sender_ctx->get_status() == 2) {
-                                auto sender_uemail = sender_ctx->get_bind_uid();
-                                auto sender_uname = users.get_uname_by_uemail(sender_uemail);
+                        auto sender_ctx = clients.get_ctx(recved_cif);
+                        if (sender_ctx && sender_ctx->get_status() == 2) {
+                            auto sender_uemail = sender_ctx->get_bind_uid();
+                            auto sender_uname = users.get_uname_by_uemail(sender_uemail);
+                            
+                            if (!sender_uname) {
+                                continue; // Invalid sender
+                            }
+                            
+                            std::string timestamp = lc_utils::now_time_to_str();
+                            
+                            // Build response message: from_user,timestamp,content
+                            std::string response_msg = *sender_uname + "," + timestamp + "," + message_content;
+                            
+                            if (is_broadcast) {
+                                // Broadcast to all clients
+                                secure_broadcasting(
+                                    reinterpret_cast<const uint8_t *>(response_msg.data()), 
+                                    response_msg.size());
+                            } else if (!recipients.empty()) {
+                                // Send to specific recipients (private/group message)
+                                // Include sender so they see their own message
+                                std::vector<std::string> all_recipients = recipients;
+                                // Add sender if not already in list
+                                bool sender_in_list = false;
+                                for (const auto& r : recipients) {
+                                    if (r == *sender_uname) {
+                                        sender_in_list = true;
+                                        break;
+                                    }
+                                }
+                                if (!sender_in_list) {
+                                    all_recipients.push_back(*sender_uname);
+                                }
                                 
-                                std::string timestamp = lc_utils::now_time_to_str();
-                                auto response_size = sender_uname->size() + 1 + 
-                                                    timestamp.size() + 1 + 
-                                                    recved_lmsg_body.size();
-                                
-                                std::vector<uint8_t> resp(response_size, ',');
-                                size_t resp_offset = 0;
-                                std::copy(sender_uname->begin(), sender_uname->end(), 
-                                        resp.begin() + resp_offset);
-                                resp_offset += sender_uname->size() + 1;
-                                std::copy(timestamp.begin(), timestamp.end(), 
-                                        resp.begin() + resp_offset);
-                                resp_offset += timestamp.size() + 1;
-                                std::copy(recved_lmsg_body.begin(), recved_lmsg_body.end(), 
-                                        resp.begin() + resp_offset);
-                                
-                                // Broadcast the long message to all clients
-                                secure_broadcasting(resp.data(), resp.size());
+                                secure_targeted_send(
+                                    reinterpret_cast<const uint8_t *>(response_msg.data()), 
+                                    response_msg.size(),
+                                    all_recipients,
+                                    sender_uemail);
                             }
                         }
                     }
@@ -1775,24 +1920,44 @@ public:
             }
             if (header == 0x10) {
                 ssize_t expected_min_size = 1 + CIF_BYTES + 
-                        crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + 
+                        crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + SEQ_BYTES +
                         crypto_aead_aes256gcm_ABYTES;
 
                 if (buffer.recv_raw_bytes <= expected_min_size)
                     continue; // Empty or invalid message. Omit.
                 uint64_t cinfo_hash;
+                uint16_t seq_num;
                 if (!decrypt_recv_0x10raw_bytes(buffer.recv_raw_bytes, 
-                    cinfo_hash)) {
+                    cinfo_hash, seq_num)) {
                     continue;
                 }   
-                auto msg_body = buffer.recv_aes_buffer.data() + SID_BYTES;
-                auto msg_size = buffer.recv_aes_bytes - SID_BYTES;
                 conns.get_session(cinfo_hash)->set_src_addr(client_addr); // Update the client addr.
                 if (!clients.is_valid_ctx(cinfo_hash)) 
                     clients.add_ctx(cinfo_hash);
                 auto this_client = clients.get_ctx(cinfo_hash);
                 if (this_client == nullptr)
                     continue; // Abnormal.
+                
+                // Check for duplicate sequence number (replay protection)
+                if (this_client->is_duplicate_seq(seq_num)) {
+                    // Duplicate detected - send ACK anyway but don't process message
+                    std::array<uint8_t, SEQ_BYTES> seq_bytes;
+                    seq_bytes[0] = static_cast<uint8_t>((seq_num >> 8) & 0xFF);
+                    seq_bytes[1] = static_cast<uint8_t>(seq_num & 0xFF);
+                    simple_secure_send(0x17, cinfo_hash, seq_bytes.data(), SEQ_BYTES);
+                    continue;  // Skip processing duplicate
+                }
+                
+                // Skip SID (SID_BYTES) and sequence number (SEQ_BYTES) to get message body
+                auto msg_body = buffer.recv_aes_buffer.data() + SID_BYTES + SEQ_BYTES;
+                auto msg_size = buffer.recv_aes_bytes - SID_BYTES - SEQ_BYTES;
+                
+                // Send ACK immediately after successful decryption and duplicate check
+                std::array<uint8_t, SEQ_BYTES> seq_bytes;
+                seq_bytes[0] = static_cast<uint8_t>((seq_num >> 8) & 0xFF);
+                seq_bytes[1] = static_cast<uint8_t>(seq_num & 0xFF);
+                simple_secure_send(0x17, cinfo_hash, seq_bytes.data(), SEQ_BYTES);
+                
                 auto stat = this_client->get_status();
                 if (stat == 0) {
                     this_client->set_status(1);

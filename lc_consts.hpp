@@ -17,6 +17,10 @@
 constexpr uint8_t CID_BYTES = 8;
 constexpr uint8_t SID_BYTES = 8;
 constexpr uint8_t CIF_BYTES = 8;
+constexpr uint8_t SEQ_BYTES = 2;  // Sequence number for reliability
+constexpr time_t MSG_ACK_TIMEOUT_SECS = 2;  // Timeout for waiting ACK
+constexpr int MSG_MAX_RETRIES = 2;  // Maximum retry attempts
+constexpr time_t MSG_PENDING_MAX_AGE_SECS = 30;  // Maximum age for pending messages (cleanup old ones)
 
 // User login related
 constexpr ssize_t ULOGIN_MIN_BYTES = 4; // uname or uemail.

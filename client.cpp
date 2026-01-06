@@ -266,9 +266,12 @@ class client_session {
     //  4 - Activated.
     int status; 
     bool is_server_key_req;
+    
+    // Reliability: sequence number for 0x10 messages
+    uint16_t seq_counter;
 
 public:
-    client_session () : status(0), is_server_key_req(false) {
+    client_session () : status(0), is_server_key_req(false), seq_counter(0) {
         randombytes_buf(client_cid.data(), client_cid.size());
     }
 
@@ -284,6 +287,15 @@ public:
     void reset () {
         randombytes_buf(client_cid.data(), client_cid.size());
         status = 0;
+        seq_counter = 0;
+    }
+    
+    uint16_t get_next_seq () {
+        return ++seq_counter;  // Wraps at 65535
+    }
+    
+    uint16_t get_current_seq () const {
+        return seq_counter;
     }
 
     int prepare (const client_server_pk_mgr& server_pk_mgr, 
@@ -424,6 +436,19 @@ class lichat_client {
     user_list_mgr ulist_mgr;
     time_t heartbeat_interval_secs;
     int last_error;
+    
+    // Reliability: pending message tracking
+    struct pending_message {
+        uint16_t seq_num;
+        time_t timestamp;
+        std::vector<uint8_t> message_data;  // Full encrypted message to retry
+        int retry_count;
+        
+        pending_message(uint16_t seq, time_t ts, const std::vector<uint8_t>& data) 
+            : seq_num(seq), timestamp(ts), message_data(data), retry_count(0) {}
+    };
+    std::unordered_map<uint16_t, pending_message> pending_messages;
+    std::mutex pending_mutex;
 
 public:
     // Set the UI implementation
@@ -727,7 +752,9 @@ public:
         client_session& s, const curr_user& u, user_list_mgr& ulm,
         lmsg_send_pool& lm_s, lmsg_recv_pool& lm_r, 
         const client_server_pk_mgr& server_pk, const key_mgr_25519& client_k, 
-        std::vector<std::string>& msg_vec, int& core_err) {
+        std::vector<std::string>& msg_vec, int& core_err,
+        std::unordered_map<uint16_t, pending_message>& pending_messages,
+        std::mutex& pending_mutex) {
               
         core_err = C_NORMAL_RETURN;
         if (fd < 0) {
@@ -795,10 +822,35 @@ public:
                     ui->request_disconnect();
                     continue;
                 } else if (!input.empty()) {
-                    // Send message
-                    simple_secure_send_stc(fd, 0x10, s, buff, 
-                        reinterpret_cast<const uint8_t *>(input.c_str()), 
-                        input.size());
+                    // Format message with recipient prefix
+                    // For now, default to broadcast (no prefix)
+                    // Later, UI can specify recipients via a separate method
+                    std::string formatted_msg = input; // Default: broadcast
+                    
+                    // Send message with reliability (sequence number + ACK)
+                    uint16_t seq = s.get_next_seq();
+                    
+                    // Prepend sequence number to message: seq (2 bytes) + message
+                    std::vector<uint8_t> msg_with_seq(SEQ_BYTES + formatted_msg.size());
+                    msg_with_seq[0] = static_cast<uint8_t>((seq >> 8) & 0xFF);  // High byte
+                    msg_with_seq[1] = static_cast<uint8_t>(seq & 0xFF);          // Low byte
+                    std::copy(formatted_msg.begin(), formatted_msg.end(), 
+                             msg_with_seq.begin() + SEQ_BYTES);
+                    
+                    // Send message and track for ACK
+                    ssize_t send_result = simple_secure_send_stc(fd, 0x10, s, buff, 
+                        msg_with_seq.data(), msg_with_seq.size());
+                    
+                    if (send_result >= 0) {
+                        // Store encrypted message for retry if needed
+                        std::vector<uint8_t> encrypted_msg(
+                            buff.send_buffer.begin(), 
+                            buff.send_buffer.begin() + buff.send_bytes);
+                        
+                        std::lock_guard<std::mutex> lock(pending_mutex);
+                        pending_messages.emplace(seq, 
+                            pending_message(seq, lc_utils::now_time(), encrypted_msg));
+                    }
                 }
             }
             
@@ -841,8 +893,65 @@ public:
             offset = 0;
             auto header = buff.recv_raw_buffer[0];
             if (header != 0x11 && header != 0x10 && 
-                header != 0x1F && header != 0x13)
+                header != 0x1F && header != 0x13 && header != 0x17)
                 continue;
+            
+            // Handle ACK message (0x17) - encrypted ACK from server
+            if (header == 0x17) {
+                // ACK format: 0x17 + encrypted(seq_num, 2 bytes)
+                // Same format as 0x10: header + cif + nonce + encrypted(sid + seq_num)
+                ssize_t expected_min = 1 + CIF_BYTES + 
+                    crypto_aead_aes256gcm_NPUBBYTES + SID_BYTES + SEQ_BYTES + 
+                    crypto_aead_aes256gcm_ABYTES;
+                if (bytes < expected_min)
+                    continue;
+                
+                // Decrypt using same logic as 0x10
+                size_t dec_offset = 1;  // Skip header
+                std::array<uint8_t, CIF_BYTES> recv_cif_bytes;
+                std::copy(raw_beg + dec_offset, raw_beg + dec_offset + CIF_BYTES, 
+                         recv_cif_bytes.begin());
+                dec_offset += CIF_BYTES;
+                
+                if (std::memcmp(recv_cif_bytes.data(), cif.data(), CIF_BYTES) != 0)
+                    continue;  // Not for us
+                
+                std::array<uint8_t, crypto_aead_aes256gcm_NPUBBYTES> recv_nonce;
+                std::copy(raw_beg + dec_offset, 
+                         raw_beg + dec_offset + crypto_aead_aes256gcm_NPUBBYTES,
+                         recv_nonce.begin());
+                dec_offset += crypto_aead_aes256gcm_NPUBBYTES;
+                
+                size_t encrypted_len = bytes - dec_offset;
+                unsigned long long dec_len = 0;
+                auto aes_key = s.get_aes256gcm_key();
+                
+                if (crypto_aead_aes256gcm_decrypt(
+                    buff.recv_aes_buffer.data(), &dec_len,
+                    nullptr,
+                    raw_beg + dec_offset, encrypted_len,
+                    nullptr, 0,
+                    recv_nonce.data(), aes_key.data()) != 0)
+                    continue;  // Decryption failed
+                
+                buff.recv_aes_bytes = dec_len;
+                
+                // Verify SID
+                if (dec_len < SID_BYTES + SEQ_BYTES)
+                    continue;
+                if (std::memcmp(buff.recv_aes_buffer.data(), sid.data(), SID_BYTES) != 0)
+                    continue;
+                
+                // Extract sequence number
+                uint16_t acked_seq = (buff.recv_aes_buffer[SID_BYTES] << 8) | 
+                                     buff.recv_aes_buffer[SID_BYTES + 1];
+                
+                // Remove from pending messages (passed as parameter)
+                std::lock_guard<std::mutex> lock(pending_mutex);
+                pending_messages.erase(acked_seq);
+                continue;
+            }
+            
             if (header == 0x11 || header == 0x13) {
                 ++ offset;
                 if (crypto_sign_open(nullptr, &unsign_len, raw_beg + offset,
@@ -1068,6 +1177,10 @@ public:
                     chat_msg.is_system = false;
                     chat_msg.content = last_msg.substr(
                                     parsed[0].size() + 1 + parsed[1].size() + 1);
+                    // For now, all messages are treated as broadcast
+                    // Later, we can parse recipient info from message format
+                    chat_msg.is_private = false;
+                    chat_msg.recipients.clear();
                 }
                 chat_msg.is_from_me = (chat_msg.from_user == u.get_uname());
                 ui->on_message_received(chat_msg);
@@ -1804,8 +1917,17 @@ public:
                     is_signup, 
                     login_by_email,
                     uemail, uname, password);
-                simple_secure_send(0x10, session, user_info.data(), 
-                                    user_info.size());
+                
+                // Add sequence number to authentication message (same as regular messages)
+                uint16_t seq = session.get_next_seq();
+                std::vector<uint8_t> auth_msg_with_seq(SEQ_BYTES + user_info.size());
+                auth_msg_with_seq[0] = static_cast<uint8_t>((seq >> 8) & 0xFF);  // High byte
+                auth_msg_with_seq[1] = static_cast<uint8_t>(seq & 0xFF);          // Low byte
+                std::copy(user_info.begin(), user_info.end(), 
+                         auth_msg_with_seq.begin() + SEQ_BYTES);
+                
+                simple_secure_send(0x10, session, auth_msg_with_seq.data(), 
+                                    auth_msg_with_seq.size());
                 
                 session.sent_auth();
                 continue;
@@ -1837,9 +1959,12 @@ public:
         std::thread heartbeat(thread_heartbeat, heartbeat_interval_secs);
         // Start the core thread.
         int core_err = 0;
-        std::thread core(std::bind(thread_run_core_ui, ui.get(), client_fd, buffer, 
-            session, user, ulist_mgr, lmsg_sends, lmsg_recvs, 
-            server_pk_mgr, client_key, messages, core_err));
+        std::thread core(thread_run_core_ui, ui.get(), client_fd, 
+            std::ref(buffer), std::ref(session), std::ref(user), 
+            std::ref(ulist_mgr), std::ref(lmsg_sends), std::ref(lmsg_recvs),
+            std::ref(server_pk_mgr), std::ref(client_key), 
+            std::ref(messages), std::ref(core_err),
+            std::ref(pending_messages), std::ref(pending_mutex));
         
         // UI runs in main thread via Qt event loop
         // The core thread will call UI methods which are thread-safe
