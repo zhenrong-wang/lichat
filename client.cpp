@@ -9,8 +9,12 @@
 #include "lc_consts.hpp"
 #include "lc_bufmgr.hpp"
 #include "lc_strings.hpp"
-#include "lc_winmgr.hpp"
 #include "lc_long_msg.hpp"
+#include "lc_ui_interface.hpp"
+#include "lc_ui_qt.hpp"
+#include <QApplication>
+#include <memory>
+#include <thread>
 
 #include <iostream>
 #include <sys/socket.h>
@@ -52,28 +56,20 @@ std::string send_msg_body;
 std::mutex mtx;
 
 /**
- * This is the client core code. 
- * It could be integrated with a front-end class `window_mgr`
+ * LiChat Client Core
  * 
- * A window_mgr should provide methods:
- *  - init()                : initialize the window environment
- *  - set()                 : set attributes
- *  - err_to_string()       : convert error code to string
- *  - winput()              : handle user inputs in a loop
- *  - force_close()         : close the window environment
- *  - welcome_user()        : print welcome message
- *  - wprint_to_output()    : print message to the output window
- *  - fmt_prnt_msg()        : print messages in a formatted way
+ * Modernized architecture with UI interface abstraction.
+ * The core is decoupled from specific UI implementations.
  * 
- * A window_mgr needs to include these global variables:
- *  - std::atomic<bool> send_msg_req
- *  - std::atomic<bool> send_gby_req
- *  - std::string send_msg_body
- *  - std::mutex mtx
- *  - std::atomic<bool> auto_signout
- *  - std::atomic<bool> heartbeat_timeout
+ * UI implementations should implement lichat::ui_interface.
+ * See lc_ui_interface.hpp for the interface definition.
  * 
- * Please refer to "lc_winmgr.hpp" for the default ncurses-based code.
+ * Global state (for heartbeat and core control):
+ *  - core_running: Controls main core loop
+ *  - heartbeating: Controls heartbeat thread
+ *  - heartbeat_timeout: Set when heartbeat fails
+ *  - heartbeat_req: Request to send heartbeat
+ *  - auto_signout: Set when signed out from another client
  */
 
 enum client_errors {
@@ -424,18 +420,27 @@ class lichat_client {
     lmsg_send_pool lmsg_sends; 
     lmsg_recv_pool lmsg_recvs;
     curr_user user;
-    window_mgr winmgr;
+    std::unique_ptr<lichat::ui_interface> ui;
     user_list_mgr ulist_mgr;
     time_t heartbeat_interval_secs;
     int last_error;
 
 public:
+    // Set the UI implementation
+    void set_ui(std::unique_ptr<lichat::ui_interface> ui_ptr) {
+        ui = std::move(ui_ptr);
+    }
+    
+    // Get the UI implementation (non-owning pointer)
+    lichat::ui_interface* get_ui() {
+        return ui.get();
+    }
 
     lichat_client () : 
         client_fd(-1), server_pk_mgr(client_server_pk_mgr()), 
         key_dir(default_key_dir), session(client_session()), 
         client_key(key_mgr_25519(key_dir, "client_")), buffer(msg_buffer()), 
-        user(curr_user()), winmgr(window_mgr()), ulist_mgr(user_list_mgr()),
+        user(curr_user()), ui(nullptr), ulist_mgr(user_list_mgr()),
         heartbeat_interval_secs(DEFAULT_HEARTBEAT_INTERVAL_SECS), 
         last_error(0) {
 
@@ -717,7 +722,8 @@ public:
         return true;
     }
 
-    static void thread_run_core (window_mgr& w, const int fd, msg_buffer& buff, 
+    // New version using UI interface (decoupled)
+    static void thread_run_core_ui (lichat::ui_interface* ui, const int fd, msg_buffer& buff, 
         client_session& s, const curr_user& u, user_list_mgr& ulm,
         lmsg_send_pool& lm_s, lmsg_recv_pool& lm_r, 
         const client_server_pk_mgr& server_pk, const key_mgr_25519& client_k, 
@@ -728,6 +734,11 @@ public:
             core_err = C_SOCK_FD_INVALID;
             return;
         }
+        if (!ui) {
+            core_err = C_SOCK_FD_INVALID; // Reuse error code
+            return;
+        }
+        
         bool is_msg_recved = false, is_ulist_recved = false;
         struct sockaddr_in src_addr;
         auto addr_len = sizeof(src_addr);
@@ -744,16 +755,23 @@ public:
         std::array<uint8_t, HEARTBEAT_BYTES> hb_pack;
         std::array<uint8_t, GOODBYE_BYTES> gby_pack;
 
-        w.welcome_user(u.get_uemail(), u.get_uname());
+        // Notify UI of authentication
+        lichat::user_info user_info;
+        user_info.email = u.get_uemail();
+        user_info.username = u.get_uname();
+        ui->on_user_authenticated(user_info);
 
         while (core_running) {
+            // Check for heartbeat timeout
             if (heartbeat_timeout) {
-                w.wprint_to_output(heartbeat_timeout_msg);
+                ui->on_heartbeat_timeout();
                 core_err = C_HEARTBEAT_TIME_OUT;
                 return;
             }
-            if (send_gby_req) {
-                w.wprint_to_output(client_exit_msg);
+            
+            // Check for disconnect request from UI
+            if (ui->is_disconnect_requested()) {
+                ui->on_status_changed(client_exit_msg);
                 if (!pack_goodbye(s.get_cinfo_hash_bytes(), 
                     client_k.get_sign_sk(), gby_pack)) {
                     core_err = C_GOODBYE_SENT_ERR;
@@ -764,53 +782,56 @@ public:
                     core_err = C_HEARTBEAT_SENT_ERR;
                     return;
                 }
-                w.wprint_to_output(signed_out_msg);
-                send_gby_req.store(false);
+                ui->on_status_changed(signed_out_msg);
+                ui->clear_disconnect_request();
+                ui->on_user_disconnected();
                 return;
             }
+            
+            // Check for user input
+            if (ui->has_input()) {
+                std::string input = ui->get_input();
+                if (input == ":q!") {
+                    ui->request_disconnect();
+                    continue;
+                } else if (!input.empty()) {
+                    // Send message
+                    simple_secure_send_stc(fd, 0x10, s, buff, 
+                        reinterpret_cast<const uint8_t *>(input.c_str()), 
+                        input.size());
+                }
+            }
+            
             // Check the long message receivers / senders.
             auto now = lc_utils::now_time();
             if (now - last_lmsg_check.load() >= LMSG_ALIVE_SECS) {
                 lm_r.check_all(now);
                 lm_s.check_all(now);
             }
+            
             auto bytes = recvfrom(fd, buff.recv_raw_buffer.data(), 
                 buff.recv_raw_buffer.size(), 0, 
                 (struct sockaddr *)(&src_addr), (socklen_t *)&addr_len);
             errno = 0;
             is_msg_recved = false;
             if (bytes < 0) {
-                // Handling sending workloads.
+                // Handling sending workloads and heartbeat
                 if (!errno || errno == EWOULDBLOCK || errno == EAGAIN) {
-                    if (send_msg_req) {
-                        if (send_msg_body.size() > 0) {
-                            mtx.lock();
-                            simple_secure_send_stc(fd, 0x10, s, buff, 
-                                reinterpret_cast<const uint8_t *>
-                                    (send_msg_body.c_str()), 
-                                send_msg_body.size());
-                            mtx.unlock();
+                    if (heartbeat_req) {
+                        if (!pack_heartbeat(s.get_cinfo_hash_bytes(),
+                            client_k.get_sign_sk(), hb_pack)) {
+                            core_err = C_HEARTBEAT_SENT_ERR;
+                            return;
                         }
-                        send_msg_req.store(false);
-                        continue;
-                    }
-                    else {
-                        if (heartbeat_req) {
-                            if (!pack_heartbeat(s.get_cinfo_hash_bytes(),
-                                client_k.get_sign_sk(), hb_pack)) {
-                                core_err = C_HEARTBEAT_SENT_ERR;
-                                return;
-                            }
-                            if (simple_send_stc(fd, s, hb_pack.data(), 
-                                hb_pack.size()) < 0) {
-                                core_err = C_HEARTBEAT_SENT_ERR;
-                                return;
-                            }
-                            last_heartbeat_sent.store(lc_utils::now_time());
-                            heartbeat_req.store(false);
+                        if (simple_send_stc(fd, s, hb_pack.data(), 
+                            hb_pack.size()) < 0) {
+                            core_err = C_HEARTBEAT_SENT_ERR;
+                            return;
                         }
-                        continue;
+                        last_heartbeat_sent.store(lc_utils::now_time());
+                        heartbeat_req.store(false);
                     }
+                    continue;
                 }
                 core_err = C_SOCKET_RECV_ERR;
                 return;
@@ -851,11 +872,11 @@ public:
                     lm_r.add_lmsg(chunk);
                     auto receiver = lm_r.get_receiver(msg_id);
                     if (!receiver) {
-                        w.wprint_to_output(lmsg_recv_failed);
+                        ui->on_error(lmsg_recv_failed);
                         continue;
                     }
                     if (receiver->recv_timeout()) {
-                        w.wprint_to_output(lmsg_recv_failed);
+                        ui->on_error(lmsg_recv_failed);
                         continue;
                     }
                     if (!receiver->recv_done()) {
@@ -957,20 +978,39 @@ public:
                 is_msg_recved = true;
                 if (msg_len == sizeof(s_signout) && 
                     std::memcmp(s_signout, msg_beg, sizeof(s_signout)) == 0) {
-                    
-                    w.wprint_to_output(auto_signout_msg);
+                    ui->on_error(auto_signout_msg);
                     auto_signout.store(true);
                     return;
                 }
             }
+            
+            // Process user list updates
             if (is_ulist_recved) {
-                w.wprint_user_list(ulm.get_ulist());
+                // Parse user list string into vector
+                std::vector<lichat::user_list_entry> users;
+                std::istringstream iss(ulm.get_ulist());
+                std::string line;
+                while (std::getline(iss, line)) {
+                    if (line.empty()) continue;
+                    lichat::user_list_entry entry;
+                    size_t in_pos = line.find(" (in)");
+                    if (in_pos != std::string::npos) {
+                        entry.username = line.substr(0, in_pos);
+                        entry.is_online = true;
+                    } else {
+                        entry.username = line;
+                        entry.is_online = false;
+                    }
+                    users.push_back(entry);
+                }
+                ui->on_user_list_updated(users);
                 is_ulist_recved = false;
                 continue;
             }
+            
+            // Process messages
             if (is_msg_recved) {
                 auto last_msg = msg_vec.back();
-                //w.wprint_to_output(last_msg);
                 auto parsed = lc_utils::split_buffer(
                             reinterpret_cast<const uint8_t *>(last_msg.data()), 
                             last_msg.size(), ',', 4); 
@@ -978,8 +1018,14 @@ public:
                     msg_vec.pop_back();
                     continue;
                 }
-                std::string bare_msg;
+                
+                lichat::chat_message chat_msg;
+                chat_msg.from_user = parsed[0];
+                chat_msg.timestamp = parsed[1];
+                
                 if (parsed.size() == 4 && parsed[0] == "[S]") {
+                    chat_msg.is_system = true;
+                    std::string bare_msg;
                     if (parsed[3] == "#") {
                         if (parsed[2] != u.get_uname()) {
                             ulm.add_signin_user(parsed[2]);
@@ -998,16 +1044,38 @@ public:
                             bare_msg = parsed[2] + " signed out!";
                         }
                     }
-                    w.wprint_user_list(ulm.get_ulist());
-                    w.fmt_prnt_msg("[SYSTEM]", parsed[1], bare_msg, u.get_uname());
-                    continue;
+                    chat_msg.content = bare_msg;
+                    
+                    // Update user list
+                    std::vector<lichat::user_list_entry> users;
+                    std::istringstream iss(ulm.get_ulist());
+                    std::string line;
+                    while (std::getline(iss, line)) {
+                        if (line.empty()) continue;
+                        lichat::user_list_entry entry;
+                        size_t in_pos = line.find(" (in)");
+                        if (in_pos != std::string::npos) {
+                            entry.username = line.substr(0, in_pos);
+                            entry.is_online = true;
+                        } else {
+                            entry.username = line;
+                            entry.is_online = false;
+                        }
+                        users.push_back(entry);
+                    }
+                    ui->on_user_list_updated(users);
+                } else {
+                    chat_msg.is_system = false;
+                    chat_msg.content = last_msg.substr(
+                                    parsed[0].size() + 1 + parsed[1].size() + 1);
                 }
-                bare_msg = last_msg.substr(
-                                parsed[0].size() + 1 + parsed[1].size() + 1);
-                w.fmt_prnt_msg(parsed[0], parsed[1], bare_msg, u.get_uname());
+                chat_msg.is_from_me = (chat_msg.from_user == u.get_uname());
+                ui->on_message_received(chat_msg);
             }
         }
     }
+
+    // Legacy version removed - using UI interface now
 
     // Close server and possible FD
     bool close_client (int err) {
@@ -1615,66 +1683,126 @@ public:
                 break; // Auth succeeded
             }
             if (status == 3) {
-                std::string option, login_type, uemail, uname, password;
-                if (!user_input(main_menu, option, CLIENT_INPUT_RETRY, false,
-                    [](const std::string& op) {
-                    if (op == "1" || op == "2" || op == "signup" || 
-                        op == "signin") return 0;
-                    return 1;
-                })) continue;
-                if (option == "1" || option == "signup") { // Signing up, require email, username & password
-                    if (!user_input(input_email, uemail, CLIENT_INPUT_RETRY, 
-                        false, lc_utils::email_fmt_check))  
-                        continue;
-
-                    if (!user_input(input_username, uname, CLIENT_INPUT_RETRY, 
-                        false, lc_utils::user_name_fmt_check)) 
-                        continue;
-
-                    if (!user_input(input_password, password, 
-                        CLIENT_INPUT_RETRY, true, lc_utils::pass_fmt_check))
-                        continue;
-                    
-                    std::string re = lc_utils::getpass_stdin(retype_password);
-                    if (re != password) {
-                        std::cout << "Failed to confirm your password.\n";
-                        password.clear();
-                        re.clear();
-                        continue;
+                // Declare variables in outer scope for both UI and console paths
+                std::string uemail, uname, password;
+                bool is_signup = false;
+                
+                // Use UI for authentication if available
+                if (ui) {
+                    // request_auth_credentials will show choice dialog first, then auth dialog
+                    // The is_signup parameter is set by the UI based on user's choice
+                    if (!ui->request_auth_credentials(is_signup, uemail, uname, password)) {
+                        // User cancelled authentication
+                        return close_client(NORMAL_RETURN);
                     }
-                }
-                else {
-                    if (!user_input(choose_login, login_type, 
-                        CLIENT_INPUT_RETRY, false, [](const std::string& op) {
-                        if (op == "1" || op == "2" || op == "email" || 
-                            op == "username") return 0;
+                    
+                    // Validate credentials
+                    if (is_signup) {
+                        if (lc_utils::email_fmt_check(uemail) != 0) {
+                            ui->on_error("Invalid email format");
+                            continue;
+                        }
+                        if (lc_utils::user_name_fmt_check(uname) != 0) {
+                            ui->on_error("Invalid username format");
+                            continue;
+                        }
+                        if (lc_utils::pass_fmt_check(password) != 0) {
+                            ui->on_error("Invalid password format");
+                            continue;
+                        }
+                    } else {
+                        // Signin: validate based on what was provided
+                        if (!uemail.empty()) {
+                            if (lc_utils::email_fmt_check(uemail) != 0) {
+                                ui->on_error("Invalid email format");
+                                continue;
+                            }
+                        } else if (!uname.empty()) {
+                            if (lc_utils::user_name_fmt_check(uname) != 0) {
+                                ui->on_error("Invalid username format");
+                                continue;
+                            }
+                        } else {
+                            ui->on_error("Please provide either email or username");
+                            continue;
+                        }
+                        if (lc_utils::pass_fmt_check(password) != 0) {
+                            ui->on_error("Invalid password format");
+                            continue;
+                        }
+                    }
+                } else {
+                    // Fallback to console input if no UI
+                    std::string option, login_type;
+                    if (!user_input(main_menu, option, CLIENT_INPUT_RETRY, false,
+                        [](const std::string& op) {
+                        if (op == "1" || op == "2" || op == "signup" || 
+                            op == "signin") return 0;
                         return 1;
                     })) continue;
-
-                    if (login_type == "1" || login_type == "email") {
-                        if (!user_input(input_email, uemail, CLIENT_INPUT_RETRY,
-                            false, lc_utils::email_fmt_check))
+                    if (option == "1" || option == "signup") { // Signing up, require email, username & password
+                        if (!user_input(input_email, uemail, CLIENT_INPUT_RETRY, 
+                            false, lc_utils::email_fmt_check))  
                             continue;
+
+                        if (!user_input(input_username, uname, CLIENT_INPUT_RETRY, 
+                            false, lc_utils::user_name_fmt_check)) 
+                            continue;
+
+                        if (!user_input(input_password, password, 
+                            CLIENT_INPUT_RETRY, true, lc_utils::pass_fmt_check))
+                            continue;
+                        
+                        std::string re = lc_utils::getpass_stdin(retype_password);
+                        if (re != password) {
+                            std::cout << "Failed to confirm your password.\n";
+                            password.clear();
+                            re.clear();
+                            continue;
+                        }
+                        is_signup = true;
                     }
                     else {
-                        if (!user_input(input_username, uname, 
-                            CLIENT_INPUT_RETRY, false, 
-                            lc_utils::user_name_fmt_check))
+                        if (!user_input(choose_login, login_type, 
+                            CLIENT_INPUT_RETRY, false, [](const std::string& op) {
+                            if (op == "1" || op == "2" || op == "email" || 
+                                op == "username") return 0;
+                            return 1;
+                        })) continue;
+
+                        if (login_type == "1" || login_type == "email") {
+                            if (!user_input(input_email, uemail, CLIENT_INPUT_RETRY,
+                                false, lc_utils::email_fmt_check))
+                                continue;
+                        }
+                        else {
+                            if (!user_input(input_username, uname, 
+                                CLIENT_INPUT_RETRY, false, 
+                                lc_utils::user_name_fmt_check))
+                                continue;
+                        }
+                        if (!user_input(input_password, password, 
+                            CLIENT_INPUT_RETRY, true, lc_utils::pass_fmt_check))
                             continue;
+                        is_signup = false;
                     }
-                    if (!user_input(input_password, password, 
-                        CLIENT_INPUT_RETRY, true, lc_utils::pass_fmt_check))
-                        continue;
                 }
+                
+                // Common code for both UI and console paths
+                // Variables uemail, uname, password, and is_signup are already declared above
                 std::array<char, crypto_pwhash_STRBYTES> hashed_pwd;
                 if (!pass_hash_dryrun(password, hashed_pwd)) {
                     last_error = HASH_PASSWORD_FAILED;
                     password.clear(); // For security concern.
+                    if (ui) ui->on_error("Failed to hash password");
                     return close_client(HASH_PASSWORD_FAILED);
                 }
+                
+                // Determine login type (email or username)
+                bool login_by_email = !uemail.empty();
                 auto user_info = assemble_user_info(
-                    (option == "1" || option == "signup"), 
-                    (login_type == "1" || login_type == "email"),
+                    is_signup, 
+                    login_by_email,
                     uemail, uname, password);
                 simple_secure_send(0x10, session, user_info.data(), 
                                     user_info.size());
@@ -1687,41 +1815,51 @@ public:
         if (!nonblock_socket()) 
             return close_client(UNBLOCK_SOCK_FAILED);
 
-        send_msg_req.store(false);
-        send_gby_req.store(false);
         core_running.store(true);
         heartbeating.store(true);
         auto_signout.store(false);
         heartbeat_timeout.store(false);
         last_lmsg_check.store(lc_utils::now_time());
 
-        auto ret = winmgr.init();
-        if (ret != W_NORMAL_RETURN) {
-            std::cout << winmgr.error_to_string(ret) << std::endl;
+        // UI must be set before running
+        if (!ui) {
+            std::cout << "UI not initialized. Call set_ui() first." << std::endl;
             return close_client(WINDOW_MGR_ERROR);
         }
-        winmgr.set();
+
+        auto ret = ui->init();
+        if (ret != 0) {
+            std::cout << "UI initialization failed with error code: " << ret << std::endl;
+            return close_client(WINDOW_MGR_ERROR);
+        }
+
         // Start the heartbeat thread.
         std::thread heartbeat(thread_heartbeat, heartbeat_interval_secs);
         // Start the core thread.
         int core_err = 0;
-        std::thread core(std::bind(thread_run_core, winmgr, client_fd, buffer, 
+        std::thread core(std::bind(thread_run_core_ui, ui.get(), client_fd, buffer, 
             session, user, ulist_mgr, lmsg_sends, lmsg_recvs, 
             server_pk_mgr, client_key, messages, core_err));
         
-        auto winput_res = winmgr.winput();
-        if (winput_res != 0 && heartbeat_timeout)
+        // UI runs in main thread via Qt event loop
+        // The core thread will call UI methods which are thread-safe
+        // (they use Qt's queued connections internally)
+        // The authentication dialog will be shown from main thread via invokeMethod
+        
+        // Wait for core thread to finish (it will block on auth dialog if needed)
+        core.join();
+        
+        // Check for errors
+        if (heartbeat_timeout)
             core_err = C_HEARTBEAT_TIME_OUT;
         
-        // Stop the threads.
+        // Stop the heartbeat thread.
         heartbeating.store(false);
         core_running.store(false);
-        // They should be joinable.
-        core.join();
         heartbeat.join();
 
-        // Clear ncurses resources.
-        winmgr.force_close();
+        // Cleanup UI
+        ui->shutdown();
 
         // Print thread errors.
         if (auto_signout)
@@ -1734,39 +1872,75 @@ public:
 };
 
 int main (int argc, char **argv) {
-    lichat_client new_client;
+    // Initialize Qt Application
+    QApplication app(argc, argv);
+    
+    // Initialize libsodium
     if (sodium_init() < 0) {
-        std::cout << "Failed to init libsodium." << std::endl;
+        std::cerr << "Failed to init libsodium." << std::endl;
         return 1;
     }
+    
+    // Create client
+    lichat_client new_client;
+    
+    // Create and set Qt UI (needed before requesting server config)
+    auto qt_ui_ptr = std::make_unique<lichat::qt_ui>();
+    new_client.set_ui(std::move(qt_ui_ptr));
+    
+    // Parse command line arguments or request server config from UI
+    std::string addr_str;
+    std::string port_str;
+    
     if (argc >= 3) {
-        std::string addr_str(argv[1]);
-        std::string port_str(argv[2]);
-        std::cout << "Trying to connect to server " << addr_str << ":" 
+        // Command line arguments provided - use them
+        addr_str = argv[1];
+        port_str = argv[2];
+        std::cout << "Using command line server: " << addr_str << ":" 
                   << port_str << std::endl;
-        if (!new_client.set_server_addr(addr_str, port_str)) {
-            std::cout << "Warning: Failed to connect to server " << addr_str 
-                      << ":" << port_str << std::endl;
-            std::cout << "Warning: Will use the default server localhost:8081." 
-                      << std::endl;
+    } else {
+        // Request server config from UI
+        if (!new_client.get_ui()->request_server_config(addr_str, port_str)) {
+            std::cout << "Server configuration cancelled. Exiting." << std::endl;
+            return 0;
         }
-        else {
-            std::cout << "Will connect to the provided server " << addr_str 
-                      << ":" << port_str << std::endl;
-        }
-    }
-    else {
-        std::cout << "Will use the default server localhost:8081." << std::endl;
+        std::cout << "Using UI-configured server: " << addr_str << ":" 
+                  << port_str << std::endl;
     }
     
+    // Set server address
+    if (!new_client.set_server_addr(addr_str, port_str)) {
+        std::cerr << "Invalid server address: " << addr_str << ":" << port_str << std::endl;
+        std::cerr << "Error Code: " << new_client.get_last_error() << std::endl;
+        return 2;
+    }
+    
+    // Start client (handshake, etc.)
     if (!new_client.start_client()) {
-        std::cout << "Failed to start client. Error Code: " 
+        std::cerr << "Failed to start client. Error Code: " 
                   << new_client.get_last_error() << std::endl;
         return 3;
     }
-    if (!new_client.run_client()) {
-        std::cout << "Client running failure. Error Code: " 
-                  << new_client.get_last_error() << std::endl;
-    }
-    return new_client.get_last_error();
+    
+    // Run client in a separate thread
+    // The Qt event loop runs in main thread
+    std::thread client_thread([&new_client]() {
+        if (!new_client.run_client()) {
+            std::cerr << "Client running failure. Error Code: " 
+                      << new_client.get_last_error() << std::endl;
+        }
+    });
+    
+    // Run Qt event loop (blocks until app quits)
+    // This is where the UI runs and handles events
+    int qt_result = app.exec();
+    
+    // Stop the client thread
+    core_running.store(false);
+    heartbeating.store(false);
+    
+    // Wait for client thread to finish
+    client_thread.join();
+    
+    return qt_result;
 }

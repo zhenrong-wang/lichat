@@ -6,9 +6,20 @@ project (lichat)
 # Dependencies
 #
 find_package(ICU REQUIRED COMPONENTS uc)
-find_package(unofficial-sodium CONFIG REQUIRED)
-set(CURSES_NEED_WIDE TRUE)
-find_package(Curses REQUIRED)
+
+# Try to find libsodium via vcpkg first, then fall back to pkg-config
+find_package(unofficial-sodium CONFIG QUIET)
+if(NOT unofficial-sodium_FOUND)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBSODIUM REQUIRED libsodium)
+    message(STATUS "Using system libsodium via pkg-config")
+    add_library(unofficial-sodium::sodium INTERFACE IMPORTED)
+    target_include_directories(unofficial-sodium::sodium INTERFACE ${LIBSODIUM_INCLUDE_DIRS})
+    target_link_libraries(unofficial-sodium::sodium INTERFACE ${LIBSODIUM_LIBRARIES})
+    target_compile_options(unofficial-sodium::sodium INTERFACE ${LIBSODIUM_CFLAGS_OTHER})
+else()
+    message(STATUS "Using vcpkg libsodium")
+endif()
 
 #
 # Platform libraries
@@ -42,25 +53,51 @@ add_compile_options(
 #
 ###################################################################################################
 
+# Find Qt6 (or Qt5)
+find_package(Qt6 QUIET COMPONENTS Core Widgets)
+if(Qt6_FOUND)
+    set(QT_VERSION_MAJOR 6)
+    message(STATUS "Found Qt6")
+else()
+    find_package(Qt5 5.15 REQUIRED COMPONENTS Core Widgets)
+    set(QT_VERSION_MAJOR 5)
+    message(STATUS "Found Qt5")
+endif()
+
+# Enable Qt MOC
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
 add_executable(client
   "client.cpp"
+  "lc_ui_qt.cpp"
+  "lc_ui_qt.hpp"
 )
-
-target_compile_definitions(client PUBLIC NCURSES_WIDECHAR)
 
 set_property(TARGET client PROPERTY CXX_STANDARD 20)
 set_property(TARGET client PROPERTY CXX_STANDARD_REQUIRED ON)
-
-target_include_directories(client PUBLIC
-        ${NCURSES_INCLUDE_DIR}/ncursesw
-)
 
 target_link_libraries(client
     PUBLIC
     unofficial-sodium::sodium
     ICU::uc
-    ${CURSES_LIBRARIES}
 )
+
+# Link Qt libraries
+if(QT_VERSION_MAJOR EQUAL 6)
+    target_link_libraries(client
+        PUBLIC
+        Qt6::Core
+        Qt6::Widgets
+    )
+else()
+    target_link_libraries(client
+        PUBLIC
+        Qt5::Core
+        Qt5::Widgets
+    )
+endif()
 
 ###################################################################################################
 #

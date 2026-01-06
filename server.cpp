@@ -1581,8 +1581,118 @@ public:
                 if (buffer.recv_raw_bytes < LMSG_BYTES_MIN)
                     continue;
                 if (header == 0x13) {
+                    // Server receiving long message from client
+                    // Format: 0x13 + signed(CIF + chunk_data)
+                    // chunk_data: msg_id (8 bytes) + chunk_header + chunk_sn + chunk_body
                     
-                    // To-Do: receive long messages.
+                    ssize_t min_bytes = 1 + crypto_sign_BYTES + CIF_BYTES + MSG_ID_BYTES + 2;
+                    if (buffer.recv_raw_bytes < min_bytes)
+                        continue;
+                    
+                    // Extract chunk data (after signature and CIF)
+                    offset = 1 + crypto_sign_BYTES + CIF_BYTES;
+                    std::vector<uint8_t> chunk(buffer.recv_raw_bytes - offset);
+                    std::copy(beg + offset, beg + buffer.recv_raw_bytes, chunk.begin());
+                    
+                    // Add chunk to receiver pool
+                    int recv_ret = lmsg_recvs.add_lmsg(chunk);
+                    if (recv_ret < 0) {
+                        // Error receiving chunk, skip
+                        continue;
+                    }
+                    
+                    // Get the message ID from chunk
+                    auto msg_id = lmsg_receiver::get_chunk_msg_id(chunk);
+                    auto receiver = lmsg_recvs.get_receiver(msg_id);
+                    if (!receiver) {
+                        continue; // Failed to create/get receiver
+                    }
+                    
+                    // Check if receiver timed out
+                    if (receiver->recv_timeout()) {
+                        lmsg_recvs.delete_receiver(msg_id);
+                        continue;
+                    }
+                    
+                    // Check if all chunks received
+                    if (!receiver->recv_done()) {
+                        if (!receiver->last_chunk_received()) {
+                            // Still receiving chunks, wait for more
+                            continue;
+                        }
+                        
+                        // Last chunk received, check for missing chunks
+                        receiver->check_missing_chunks();
+                        if (!receiver->recv_done()) {
+                            // Missing chunks detected, request retry
+                            auto missed = receiver->missing_chunks_to_bytes();
+                            if (1 + crypto_sign_BYTES + CIF_BYTES + 
+                                missed.size() > BUFF_BYTES) {
+                                continue; // Too large, skip
+                            }
+                            // Send 0x14 message to request missing chunks
+                            simple_sign_send(0x14, recved_cif, 
+                                reinterpret_cast<const uint8_t *>(missed.data()), 
+                                missed.size());
+                            continue;
+                        }
+                    }
+                    
+                    // All chunks received, assemble the message
+                    receiver->order_recv_chunks();
+                    auto chunks = receiver->get_recv_chunks_ordered();
+                    std::string recved_lmsg_body;
+                    for (const auto& chunk_vec : chunks) {
+                        recved_lmsg_body += std::string(
+                            reinterpret_cast<const char *>(chunk_vec.data()), 
+                            chunk_vec.size());
+                    }
+                    
+                    // Send acknowledgment (0x14 with just msg_id)
+                    auto msg_id_bytes = lc_utils::u64_to_bytes(msg_id);
+                    simple_sign_send(0x14, recved_cif, 
+                                    msg_id_bytes.data(), 
+                                    msg_id_bytes.size());
+                    
+                    // Process the received long message
+                    // Check if it's a regular chat message (not user list)
+                    if (recved_lmsg_body.length() > 0) {
+                        // Parse and broadcast the message
+                        auto parsed = lc_utils::split_buffer(
+                            reinterpret_cast<const uint8_t *>(recved_lmsg_body.data()), 
+                            recved_lmsg_body.size(), ',', 4);
+                        
+                        if (parsed.size() >= 3) {
+                            // Regular chat message format: from_user,timestamp,content
+                            auto sender_ctx = clients.get_ctx(recved_cif);
+                            if (sender_ctx && sender_ctx->get_status() == 2) {
+                                auto sender_uemail = sender_ctx->get_bind_uid();
+                                auto sender_uname = users.get_uname_by_uemail(sender_uemail);
+                                
+                                std::string timestamp = lc_utils::now_time_to_str();
+                                auto response_size = sender_uname->size() + 1 + 
+                                                    timestamp.size() + 1 + 
+                                                    recved_lmsg_body.size();
+                                
+                                std::vector<uint8_t> resp(response_size, ',');
+                                size_t resp_offset = 0;
+                                std::copy(sender_uname->begin(), sender_uname->end(), 
+                                        resp.begin() + resp_offset);
+                                resp_offset += sender_uname->size() + 1;
+                                std::copy(timestamp.begin(), timestamp.end(), 
+                                        resp.begin() + resp_offset);
+                                resp_offset += timestamp.size() + 1;
+                                std::copy(recved_lmsg_body.begin(), recved_lmsg_body.end(), 
+                                        resp.begin() + resp_offset);
+                                
+                                // Broadcast the long message to all clients
+                                secure_broadcasting(resp.data(), resp.size());
+                            }
+                        }
+                    }
+                    
+                    // Delete the receiver
+                    lmsg_recvs.delete_receiver(msg_id);
                     continue;
                 }
 
