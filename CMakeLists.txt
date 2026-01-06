@@ -7,6 +7,11 @@ project (lichat)
 #
 find_package(ICU REQUIRED COMPONENTS uc)
 
+# Find SQLite3
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+message(STATUS "Using system SQLite3 via pkg-config")
+
 # Try to find libsodium via vcpkg first, then fall back to pkg-config
 find_package(unofficial-sodium CONFIG QUIET)
 if(NOT unofficial-sodium_FOUND)
@@ -107,6 +112,7 @@ endif()
 
 add_executable(server
   "server.cpp"
+  "lc_db.cpp"
  )
  
 set_property(TARGET server PROPERTY CXX_STANDARD 20)
@@ -115,6 +121,8 @@ set_property(TARGET server PROPERTY CXX_STANDARD_REQUIRED ON)
 target_link_libraries(server
   PUBLIC
   unofficial-sodium::sodium
+  ${SQLITE3_LIBRARIES}
 )
+target_include_directories(server PUBLIC ${SQLITE3_INCLUDE_DIRS})
 
 ###################################################################################################
