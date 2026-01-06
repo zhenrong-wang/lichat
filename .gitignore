@@ -2,3 +2,32 @@ CMakeUserPresets.json
 /.vs
 /out
 /vcpkg_installed
+
+# Build directory - contains build artifacts, binaries, and sensitive keys
+build/
+
+# Sensitive files - cryptographic keys and databases
+*.sec
+*.key
+*.db
+*.sqlite
+*.pub
+
+# Binary executables
+client
+server
+
+# Object files and build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
